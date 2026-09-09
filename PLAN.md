@@ -87,8 +87,8 @@ auto-learning the dictionary, iOS, notarization, auto-update.
 
 ## Mac app design
 
-- `mac/project.yml` for xcodegen. Target `VoiceToText`, bundle id
-  `com.codywright.voicetotext`, macOS deployment target 14.0, SwiftUI app with
+- `mac/project.yml` for xcodegen. Target `Aside`, bundle id
+  `com.codywright.aside`, macOS deployment target 14.0, SwiftUI app with
   `LSUIElement = true` (menu-bar only, no Dock icon). Entitlements: none needed for
   ad-hoc local builds; App Sandbox OFF (required for the Accessibility API).
   Info.plist keys: `NSMicrophoneUsageDescription`, and a Privacy string for
@@ -125,7 +125,7 @@ auto-learning the dictionary, iOS, notarization, auto-update.
     digit and the text starts with a letter; skip when the Accessibility API cannot read
     context.
   - `Dictionary.swift` + `DictionaryView.swift`: `[DictionaryEntry]` persisted as JSON
-    in `~/Library/Application Support/VoiceToText/dictionary.json`. Table with add /
+    in `~/Library/Application Support/Aside/dictionary.json`. Table with add /
     edit / delete, columns Term and Replacement (optional). Import/export as JSON.
   - `Settings.swift` + `SettingsView.swift`: backend URL (default
     `http://localhost:8787`), backend token, cleanup level, shortcut recorder,
@@ -137,12 +137,12 @@ auto-learning the dictionary, iOS, notarization, auto-update.
   - `StatusOverlay.swift`: small non-activating floating `NSPanel` near the bottom
     center of the screen showing "Listening" / "Transcribing" / the error text. Never
     steals focus (`.nonactivatingPanel`, `canBecomeKey = false`).
-  - `Log.swift`: `os.Logger` with subsystem `com.codywright.voicetotext`. Never log
+  - `Log.swift`: `os.Logger` with subsystem `com.codywright.aside`. Never log
     transcript text at default level.
 - Frontmost app name from `NSWorkspace.shared.frontmostApplication` captured at key-down,
   sent as `app_name`.
 - Build must succeed with:
-  `cd mac && xcodegen generate && xcodebuild -project VoiceToText.xcodeproj -scheme VoiceToText -configuration Debug CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build`
+  `cd mac && xcodegen generate && xcodebuild -project Aside.xcodeproj -scheme Aside -configuration Debug CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build`
   Add `mac/build.sh` that runs that and prints the path of the built `.app`, and
   `mac/run.sh` that builds then `open`s it.
 - Swift 6 language mode is fine but avoid fighting strict concurrency: mark AppKit-touching

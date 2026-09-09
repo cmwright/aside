@@ -163,7 +163,7 @@ final class Permissions: ObservableObject {
     /// One sentence, shown wherever the Accessibility row appears.
     static let adHocSigningNote = """
     This build is ad-hoc signed, so macOS ties the Accessibility grant to the exact binary: \
-    after every rebuild you may have to remove VoiceToText from System Settings > Privacy & \
+    after every rebuild you may have to remove Aside from System Settings > Privacy & \
     Security > Accessibility with the "-" button and add it again.
     """
 }

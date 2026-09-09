@@ -52,6 +52,7 @@ final class AppSettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        AppSettings.migrateFromVoiceToTextIfNeeded(into: defaults)
         defaults.register(defaults: [
             Key.backendURL: AppSettings.defaultBackendURL,
             Key.playSounds: true,
@@ -67,6 +68,28 @@ final class AppSettings: ObservableObject {
         holdRightOption = defaults.bool(forKey: Key.holdRightOption)
         doubleTapToLatch = defaults.bool(forKey: Key.doubleTapToLatch)
         transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .cloud
+    }
+
+    /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate
+    /// preferences domain. Copy our keys (and the KeyboardShortcuts recording) across once.
+    private static let migrationMarker = "migratedFromVoiceToText"
+
+    static func migrateFromVoiceToTextIfNeeded(into defaults: UserDefaults) {
+        guard defaults.object(forKey: migrationMarker) == nil else { return }
+        defaults.set(true, forKey: migrationMarker)
+        guard defaults === UserDefaults.standard,
+              let legacy = UserDefaults(suiteName: "com.codywright.voicetotext")?.dictionaryRepresentation(),
+              !legacy.isEmpty else { return }
+        let ours: Set<String> = [Key.backendURL, Key.backendToken, Key.cleanup, Key.playSounds,
+                                 Key.holdRightOption, Key.doubleTapToLatch, Key.transcriptionMode]
+        var copied = 0
+        for (key, value) in legacy where ours.contains(key) || key.hasPrefix("KeyboardShortcuts_") {
+            if defaults.object(forKey: key) == nil {
+                defaults.set(value, forKey: key)
+                copied += 1
+            }
+        }
+        if copied > 0 { Log.app.notice("Migrated \(copied, privacy: .public) settings from VoiceToText") }
     }
 
     /// `backendURLString` with whitespace and a trailing slash removed, or nil if unusable.

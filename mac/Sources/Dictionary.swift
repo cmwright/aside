@@ -56,7 +56,7 @@ enum DictionaryCodec {
     }
 }
 
-/// Loads and saves `~/Library/Application Support/VoiceToText/dictionary.json`.
+/// Loads and saves `~/Library/Application Support/Aside/dictionary.json`.
 @MainActor
 final class DictionaryStore: ObservableObject {
     static let shared = DictionaryStore()
@@ -68,14 +68,32 @@ final class DictionaryStore: ObservableObject {
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? DictionaryStore.defaultFileURL()
+        DictionaryStore.migrateFromVoiceToTextIfNeeded(to: self.fileURL)
         load()
+    }
+
+    /// The app was called VoiceToText before 2026-09-08. Copy that dictionary over once.
+    static func migrateFromVoiceToTextIfNeeded(to target: URL) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: target.path) else { return }
+        let legacy = target.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("VoiceToText", isDirectory: true)
+            .appendingPathComponent("dictionary.json")
+        guard fm.fileExists(atPath: legacy.path) else { return }
+        do {
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: legacy, to: target)
+            Log.store.notice("Migrated dictionary from the VoiceToText folder")
+        } catch {
+            Log.store.error("Dictionary migration failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     static func defaultFileURL() -> URL {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("VoiceToText", isDirectory: true)
+        return base.appendingPathComponent("Aside", isDirectory: true)
             .appendingPathComponent("dictionary.json")
     }
 

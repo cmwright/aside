@@ -15,15 +15,6 @@ enum DictationState: Equatable {
     case processing
     case failed(String)
 
-    var symbol: String {
-        switch self {
-        case .idle: return "mic"
-        case .recording: return "mic.fill"
-        case .processing: return "waveform"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-
     var menuTitle: String {
         switch self {
         case .idle: return "Ready"
@@ -404,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if AppSettings.shared.transcriptionMode == .local {
                 LocalTranscriber.shared.prepare()
             }
-            Log.app.info("VoiceToText launched")
+            Log.app.info("Aside launched")
         }
     }
 
@@ -427,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct VoiceToTextApp: App {
+struct AsideApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var controller = AppController.shared
     @StateObject private var settings = AppSettings.shared
@@ -437,8 +428,8 @@ struct VoiceToTextApp: App {
         MenuBarExtra {
             MenuContent(controller: controller)
         } label: {
-            Image(systemName: controller.state.symbol)
-                .accessibilityLabel("VoiceToText")
+            Image(nsImage: AsideIcon.menuBarImage(for: controller.state))
+                .accessibilityLabel("Aside")
         }
 
         Window("Dictionary", id: WindowID.dictionary) {
@@ -513,7 +504,7 @@ private struct MenuContent: View {
 
         Divider()
 
-        Button("Quit VoiceToText") { NSApp.terminate(nil) }
+        Button("Quit Aside") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 

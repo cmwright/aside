@@ -4,7 +4,7 @@ import os
 /// Central logger. Transcript text is never logged at default level — only lengths and
 /// timings — so a user's dictation never ends up in the unified log.
 enum Log {
-    static let subsystem = "com.codywright.voicetotext"
+    static let subsystem = "com.codywright.aside"
 
     static let app = Logger(subsystem: subsystem, category: "app")
     static let audio = Logger(subsystem: subsystem, category: "audio")

@@ -10,6 +10,6 @@ if [ ! -d "$APP" ]; then
   exit 1
 fi
 
-pkill -f "VoiceToText.app/Contents/MacOS/VoiceToText" 2>/dev/null || true
+pkill -f "Aside.app/Contents/MacOS/Aside" 2>/dev/null || true
 open "$APP"
-echo "Launched $APP — look for the microphone icon in the menu bar."
+echo "Launched $APP — look for the Aside icon (a text cursor with two sound arcs) in the menu bar."

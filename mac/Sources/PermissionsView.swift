@@ -5,7 +5,7 @@ struct PermissionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("VoiceToText needs two permissions.")
+            Text("Aside needs two permissions.")
                 .font(.headline)
 
             row(

@@ -1,4 +1,4 @@
-name: VoiceToText
+name: Aside
 
 options:
   bundleIdPrefix: com.codywright
@@ -29,18 +29,20 @@ settings:
     ALWAYS_SEARCH_USER_PATHS: "NO"
 
 targets:
-  VoiceToText:
+  Aside:
     type: application
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - package: KeyboardShortcuts
       - package: FluidAudio
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.voicetotext
-        PRODUCT_NAME: VoiceToText
+        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside
+        PRODUCT_NAME: Aside
         # App Sandbox is intentionally OFF: the Accessibility API and global event
         # monitors do not work from a sandboxed app. No entitlements file is used.
         ENABLE_APP_SANDBOX: "NO"
@@ -49,8 +51,9 @@ targets:
     info:
       path: Info.plist
       properties:
-        CFBundleName: VoiceToText
-        CFBundleDisplayName: VoiceToText
+        CFBundleName: Aside
+        CFBundleIconFile: AppIcon
+        CFBundleDisplayName: Aside
         CFBundlePackageType: APPL
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -58,32 +61,32 @@ targets:
         # Menu-bar only: no Dock icon, no main window.
         LSUIElement: true
         NSHumanReadableCopyright: "MIT licensed."
-        NSMicrophoneUsageDescription: "VoiceToText records your voice while you hold the dictation key, and transcribes it on this Mac or at the backend you configured."
-        NSAppleEventsUsageDescription: "VoiceToText does not send Apple Events; this key is present only so macOS never shows an empty prompt."
+        NSMicrophoneUsageDescription: "Aside records your voice while you hold the dictation key, and transcribes it on this Mac or at the backend you configured."
+        NSAppleEventsUsageDescription: "Aside does not send Apple Events; this key is present only so macOS never shows an empty prompt."
         # Accessibility has no Info.plist usage-description key. It is requested at
         # runtime with AXIsProcessTrustedWithOptions and explained in Permissions.
-        VTTAccessibilityUsageDescription: "VoiceToText needs Accessibility access to notice when you hold the dictation key and to insert the transcribed text at your cursor."
+        VTTAccessibilityUsageDescription: "Aside needs Accessibility access to notice when you hold the dictation key and to insert the transcribed text at your cursor."
 
-  VoiceToTextTests:
+  AsideTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: Tests
     dependencies:
-      - target: VoiceToText
+      - target: Aside
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.voicetotext.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.tests
         GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
-  VoiceToText:
+  Aside:
     build:
       targets:
-        VoiceToText: all
+        Aside: all
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - VoiceToTextTests
+        - AsideTests

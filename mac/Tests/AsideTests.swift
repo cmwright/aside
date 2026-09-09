@@ -1,10 +1,10 @@
 import AppKit
 import XCTest
-@testable import VoiceToText
+@testable import Aside
 
 /// Only the pure, non-UI logic: the WAV header, the multipart body, the dictionary codec,
 /// URL normalization and the leading-space rule.
-final class VoiceToTextTests: XCTestCase {
+final class AsideTests: XCTestCase {
 
     // MARK: - WAV
 
@@ -293,7 +293,7 @@ final class VoiceToTextTests: XCTestCase {
 
     /// Real model, real audio. Skipped unless VTT_LOCAL_ASR_TEST=1 because it downloads
     /// ~600 MB on first run. Run once to prove the pipeline and warm the cache:
-    ///   VTT_LOCAL_ASR_TEST=1 xcodebuild ... test -only-testing:VoiceToTextTests/VoiceToTextTests/testParakeetTranscribesFixture
+    ///   VTT_LOCAL_ASR_TEST=1 xcodebuild ... test -only-testing:AsideTests/AsideTests/testParakeetTranscribesFixture
     @MainActor
     func testParakeetTranscribesFixture() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")

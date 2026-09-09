@@ -67,10 +67,10 @@ icon -> **Permissions...**). Each row shows a live status: **Granted**, **Not gr
 or **Not asked yet**, with **Request** and **Open Settings** buttons.
 
 - **Microphone**: click Allow in the dialog. If you dismissed it, click **Open Settings**
-  on the Microphone row (Privacy & Security -> Microphone) and switch VoiceToText on.
+  on the Microphone row (Privacy & Security -> Microphone) and switch Aside on.
 - **Accessibility**: click **Open Settings** on the Accessibility row (Privacy &
-  Security -> Accessibility). If VoiceToText is not listed, click **+** and pick
-  `mac/build/Build/Products/Debug/VoiceToText.app`. Switch it on. The Permissions window
+  Security -> Accessibility). If Aside is not listed, click **+** and pick
+  `mac/build/Build/Products/Debug/Aside.app`. Switch it on. The Permissions window
   flips to **Granted** within a second and the app re-arms the Right Option key by
   itself; no relaunch.
 
@@ -78,28 +78,23 @@ or **Not asked yet**, with **Request** and **Open Settings** buttons.
 `./build.sh` / `./run.sh` produces a new signature and macOS quietly drops the
 Accessibility trust. Symptoms: the app is still listed and switched on, but the
 Permissions window says **Not granted** and Right Option does nothing. Fix: select
-VoiceToText in the Accessibility list, press **-**, then **+** and add the freshly built
+Aside in the Accessibility list, press **-**, then **+** and add the freshly built
 app again. Expect to do this after every rebuild. The Microphone grant survives rebuilds.
 
 ## 5. What the menu-bar icon means
 
-| Icon | State | Menu shows |
-| --- | --- | --- |
-| outline microphone (`mic`) | idle, ready to record | Ready |
-| filled microphone (`mic.fill`) | recording while you hold the key | Listening... |
-| waveform (`waveform`) | audio sent, waiting for the Worker | Transcribing... |
-| warning triangle (`exclamationmark.triangle`) | last attempt failed | the error text |
+Aside's icon is a text cursor with two sound arcs to its right (voice arriving at the
+cursor). It is a template image, so it follows the menu bar's light or dark appearance.
 
-The floating pill near the bottom of the screen mirrors it: red mic **Listening**,
-accent-colored waveform **Transcribing**, orange triangle with the error message. The
-pill never takes focus. While Accessibility is missing the pill reads "Listening -- Accessibility not
-granted, open Permissions... or the text only reaches the clipboard".
+| Icon | State |
+|---|---|
+| Cursor + two thin arcs | Idle, ready |
+| Cursor + thick arcs + a dot | Listening (recording) |
+| Cursor + three dots | Transcribing / cleaning up |
+| Cursor + exclamation mark | Last dictation failed; the menu's first line has the message |
 
-Errors you may meet: "Allow microphone access, then hold the key again" (answer the
-Microphone dialog, then retry), "Too short -- hold the key while you speak" (under
-300 ms), "Copied to clipboard; paste manually" (both insertion paths failed; the text is
-on the clipboard), a `groq: ...` message (the Worker's 502 passed through), or a
-connection error (check the backend URL under **Settings...** -> **Test Connection**).
+The floating pill near the bottom of the screen carries the same states with text, and
+the menu's first lines show the state, the engine in use, and a summary of the last run.
 
 ## 6. Dictate: try these four first (3 min)
 
@@ -145,4 +140,4 @@ Then, in any of them:
 
 ## 8. Stop
 
-Quit from the menu-bar icon (**Quit VoiceToText**), then Ctrl-C the Worker.
+Quit from the menu-bar icon (**Quit Aside**), then Ctrl-C the Worker.

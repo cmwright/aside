@@ -1,4 +1,4 @@
-# VoiceToText (macOS menu-bar app)
+# Aside (macOS menu-bar app)
 
 Hold a key, speak, let go — the text lands where your cursor is. The app records audio,
 posts it to the Worker in `../worker`, and inserts what comes back.
@@ -26,7 +26,7 @@ leading-space rule, and the Right Option device-bit decision):
 ```sh
 cd mac
 DVT_PLUG_INS_TO_IGNORE=com.apple.dt.IDESimulatorFoundation \
-  xcodebuild -project VoiceToText.xcodeproj -scheme VoiceToText \
+  xcodebuild -project Aside.xcodeproj -scheme Aside \
   -destination 'platform=macOS,arch=arm64' test
 ```
 
@@ -49,7 +49,7 @@ you; it is harmless on a healthy install.
 **Dictionary…** holds words the transcriber should get right. A row with only a *Term*
 teaches the spelling; adding a *Replacement* rewrites what was heard ("hyper comply" →
 "HyperComply"). It is stored as JSON at
-`~/Library/Application Support/VoiceToText/dictionary.json` and can be imported/exported.
+`~/Library/Application Support/Aside/dictionary.json` and can be imported/exported.
 
 If you prefer a normal shortcut to hold-to-talk, record one in **Settings…**; it toggles
 (press to start, press again to stop). You can also turn Right Option off there.
@@ -70,7 +70,7 @@ never have to relaunch the app after granting.
 There is no code-signing identity here, so builds are **ad-hoc signed** and every rebuild
 produces a different signature. macOS ties the Accessibility grant to the signature, so
 after a rebuild the app will often appear in the Accessibility list but not actually be
-trusted. Fix it by selecting VoiceToText in System Settings → Privacy & Security →
+trusted. Fix it by selecting Aside in System Settings → Privacy & Security →
 Accessibility, pressing **–** to remove it, then adding the freshly built app again with
 **+**. The Permissions window shows live status so you can tell when this has happened.
 
