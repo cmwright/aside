@@ -49,7 +49,13 @@ codesign -d --entitlements - "$APP" | grep -q audio-input || { echo "audio-input
 echo "== Notarizing (this waits for Apple, usually a few minutes)"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
-xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait
+NOTARY_OUT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait 2>&1 | tee /dev/stderr)"
+SUBMISSION_ID="$(printf '%s' "$NOTARY_OUT" | sed -n 's/^ *id: //p' | head -n 1)"
+if ! printf '%s' "$NOTARY_OUT" | grep -q "status: Accepted"; then
+  echo "Notarization was not accepted. Details:" >&2
+  xcrun notarytool log "$SUBMISSION_ID" --keychain-profile "$PROFILE" >&2 || true
+  exit 1
+fi
 
 echo "== Stapling"
 xcrun stapler staple "$APP"

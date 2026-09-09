@@ -40,6 +40,10 @@ settings:
     Release:
       CODE_SIGN_IDENTITY: "$(RELEASE_SIGN_IDENTITY)"
       ENABLE_HARDENED_RUNTIME: "YES"
+      # Notarization rejects apps carrying the debugger entitlement.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
+      # Notarization also requires a secure timestamp, which a plain build does not add.
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
 
 targets:
   Aside:
@@ -56,6 +60,10 @@ targets:
     # stays OFF: the Accessibility API and global event monitors do not work sandboxed.
     entitlements:
       path: Aside.entitlements
+      # xcodegen regenerates the file from these on every run; an entry without
+      # properties would overwrite it with an empty dict.
+      properties:
+        com.apple.security.device.audio-input: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside
@@ -87,6 +95,10 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+      # The iPhone hand-off protocol is Foundation-only and has no simulator to run in,
+      # so it is compiled into this target and tested here. See PLAN-iOS.md.
+      - path: ../ios/Shared
+      - path: ../ios/Tests
     dependencies:
       - target: Aside
     settings:
