@@ -149,6 +149,24 @@ Cleanup levels: `light` fixes punctuation, capitalization and the dictionary onl
 run at temperature 0 and are told never to add content and never to answer a question that
 appears in the transcript.
 
+## Signing and releasing
+
+Debug builds are ad-hoc signed by default, which works with no Apple account but makes
+macOS re-ask for Accessibility after every rebuild. `mac/Signing.xcconfig` (git-ignored,
+created from `Signing.xcconfig.example` on first build) controls signing:
+
+1. **Stable local builds, free.** Sign into Xcode with your Apple ID (Settings → Accounts).
+   Put the Team ID it shows in `DEVELOPMENT_TEAM` and set
+   `DEBUG_SIGN_IDENTITY = Apple Development`. Rebuilds now keep their permissions.
+2. **Distributable builds, $99/year.** Enroll in the Apple Developer Program, then in
+   Xcode → Settings → Accounts → Manage Certificates create a **Developer ID Application**
+   certificate. Create an app-specific password at https://account.apple.com and store it:
+   `xcrun notarytool store-credentials aside-notary --apple-id you@example.com --team-id TEAMID`.
+   Then `./mac/release.sh` builds a hardened-runtime Release app, signs it, notarizes it,
+   staples the ticket, and leaves `mac/build/Aside-<version>.zip` ready to publish.
+
+The app cannot go on the Mac App Store: the Accessibility API needs the App Sandbox off.
+
 ## Developing
 
 ```sh

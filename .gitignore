@@ -25,3 +25,6 @@ xcuserdata/
 *.moved-aside
 .swiftpm/
 mac/.build/
+
+# Personal signing config (team id, identities); see mac/Signing.xcconfig.example
+mac/Signing.xcconfig

@@ -1,0 +1,18 @@
+// Copy this file to Signing.xcconfig (git-ignored) and fill it in.
+// build.sh copies it for you if Signing.xcconfig is missing, which gives ad-hoc signing.
+
+// Your 10-character Team ID from https://developer.apple.com/account (Membership details).
+DEVELOPMENT_TEAM =
+
+// Debug builds. "-" is ad-hoc (works with no Apple account, but macOS re-asks for
+// Accessibility after every rebuild). With a free Apple ID signed into Xcode, use
+// "Apple Development" and the grant survives rebuilds.
+DEBUG_SIGN_IDENTITY = -
+
+// Release builds for distribution outside the App Store. Needs the paid Developer
+// Program and a "Developer ID Application" certificate in your login keychain.
+RELEASE_SIGN_IDENTITY = Developer ID Application
+
+// Name of the notarytool keychain profile created with:
+//   xcrun notarytool store-credentials aside-notary --apple-id you@example.com --team-id TEAMID
+NOTARY_PROFILE = aside-notary

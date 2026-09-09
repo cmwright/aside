@@ -17,6 +17,11 @@ if [ ! -x "$XCODEGEN" ]; then
   exit 1
 fi
 
+if [ ! -f Signing.xcconfig ]; then
+  cp Signing.xcconfig.example Signing.xcconfig
+  echo "Created Signing.xcconfig from the example (ad-hoc signing). Edit it to sign for real."
+fi
+
 "$XCODEGEN" generate
 
 DERIVED="$PWD/build"
@@ -26,9 +31,6 @@ xcodebuild \
   -scheme Aside \
   -configuration Debug \
   -derivedDataPath "$DERIVED" \
-  CODE_SIGN_IDENTITY=- \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGNING_ALLOWED=NO \
   build
 
 APP="$DERIVED/Build/Products/Debug/Aside.app"
