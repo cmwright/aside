@@ -1,4 +1,8 @@
-# Testing checklist (about 10 minutes)
+# Testing checklist: the Worker path (about 10 minutes)
+
+This walks through the optional self-hosted Worker end to end. For everyday use the app
+needs no Worker at all; see the [root README](README.md) for the on-device and
+direct-provider setup.
 
 Two terminals: one for the Worker, one for everything else. All paths are relative to
 the repo root.
