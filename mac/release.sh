@@ -33,7 +33,9 @@ xcodebuild \
   -project Aside.xcodeproj \
   -scheme Aside \
   -configuration Release \
+  -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "$DERIVED" \
+  ONLY_ACTIVE_ARCH=YES \
   build
 
 APP="$DERIVED/Build/Products/Release/Aside.app"
