@@ -27,6 +27,8 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Manual
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    DEAD_CODE_STRIPPING: "YES"
+    ALWAYS_SEARCH_USER_PATHS: "NO"
   configs:
     Debug:
       CODE_SIGN_IDENTITY: "$(DEBUG_SIGN_IDENTITY)"
@@ -34,8 +36,6 @@ settings:
     Release:
       CODE_SIGN_IDENTITY: "$(RELEASE_SIGN_IDENTITY)"
       ENABLE_HARDENED_RUNTIME: "YES"
-    DEAD_CODE_STRIPPING: "YES"
-    ALWAYS_SEARCH_USER_PATHS: "NO"
 
 targets:
   Aside:
@@ -48,14 +48,15 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: FluidAudio
+    # Only the microphone entitlement, which the Hardened Runtime requires. App Sandbox
+    # stays OFF: the Accessibility API and global event monitors do not work sandboxed.
+    entitlements:
+      path: Aside.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside
         PRODUCT_NAME: Aside
-        # App Sandbox is intentionally OFF: the Accessibility API and global event
-        # monitors do not work from a sandboxed app. No entitlements file is used.
         ENABLE_APP_SANDBOX: "NO"
-        CODE_SIGN_ENTITLEMENTS: Aside.entitlements
         COMBINE_HIDPI_IMAGES: "YES"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
     info:
