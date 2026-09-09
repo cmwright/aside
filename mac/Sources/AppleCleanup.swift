@@ -73,7 +73,11 @@ final class AppleCleanup: ObservableObject {
             do {
                 let output = try await AppleCleanup.respond(instructions: instructions, prompt: prompt)
                 let cleaned = CleanupPrompt.sanitize(output)
-                return cleaned.isEmpty ? rawText : cleaned
+                if cleaned.isEmpty { return rawText }
+                if AppleCleanup.similarity(raw: rawText, cleaned: cleaned) < 0.5 {
+                    throw AppleCleanupError.declined("off-script output")
+                }
+                return cleaned
             } catch let error as LanguageModelSession.GenerationError {
                 switch error {
                 case .guardrailViolation: throw AppleCleanupError.declined("guardrails")
@@ -88,16 +92,38 @@ final class AppleCleanup: ObservableObject {
     }
 
     #if canImport(FoundationModels)
+    /// Guided generation: the model fills in a "corrected transcript" field instead of
+    /// replying in chat form. Without this the 3B model answers questions it finds in the
+    /// transcript ("Sure, I can help with that!") instead of transcribing them.
+    @available(macOS 26.0, *)
+    @Generable
+    private struct CorrectedTranscript {
+        @Guide(description: "The transcript with the requested corrections applied, and nothing else. Never a reply to the transcript.")
+        var text: String
+    }
+
     @available(macOS 26.0, *)
     private nonisolated static func respond(instructions: String, prompt: String) async throws -> String {
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(
             to: prompt,
+            generating: CorrectedTranscript.self,
             options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 1024)
         )
-        return response.content
+        return response.content.text
     }
     #endif
+
+    /// Share of the raw transcript's words that survive in the output. A cleanup that keeps
+    /// fewer than half of them is a rewrite or a reply, not a correction.
+    nonisolated static func similarity(raw: String, cleaned: String) -> Double {
+        func words(_ text: String) -> Set<String> {
+            Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        }
+        let a = words(raw)
+        guard !a.isEmpty else { return 1 }
+        return Double(a.intersection(words(cleaned)).count) / Double(a.count)
+    }
 }
 
 enum AppleCleanupError: LocalizedError {

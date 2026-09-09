@@ -39,8 +39,9 @@ enum CleanupPrompt {
         return sections.joined(separator: "\n\n")
     }
 
+    /// Delimited so the model cannot mistake the transcript for instructions.
     static func userPrompt(_ rawText: String) -> String {
-        "Transcript:\n\(rawText)"
+        "Correct this transcript. Return the corrected transcript only.\n\n<transcript>\n\(rawText)\n</transcript>"
     }
 
     /// Strip the quotes models add anyway, mirroring sanitizeModelOutput in the Worker.

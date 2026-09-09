@@ -377,6 +377,12 @@ final class AsideTests: XCTestCase {
 
     // MARK: - Cleanup prompt
 
+    func testSimilarityGuard() {
+        XCTAssertEqual(AppleCleanup.similarity(raw: "um hello there team", cleaned: "Hello there, team."), 0.75, accuracy: 0.01)
+        XCTAssertLessThan(AppleCleanup.similarity(raw: "what time is the meeting", cleaned: "Sure, I can help with that!"), 0.5)
+        XCTAssertEqual(AppleCleanup.similarity(raw: "", cleaned: "anything"), 1)
+    }
+
     func testCleanupInstructionsMirrorWorker() {
         let light = CleanupPrompt.instructions(level: .light, entries: [])
         let medium = CleanupPrompt.instructions(level: .medium, entries: hc)
