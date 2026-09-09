@@ -138,6 +138,14 @@ Then, in any of them:
 4. Expect Parakeet to join brand names into one word ("hypercomply"); the dictionary
    post-pass handles that when the entry has a replacement.
 
-## 8. Stop
+## 8. Compare raw speech-model output with the cleaned text
+
+Menu bar icon → **Recent Dictations…** (Cmd-H while the menu is open). Each entry shows
+the engine, timings, the raw text from Parakeet or the cloud provider, and the final text
+after the LLM pass and dictionary replacements. Entries live in memory only. Switch on
+"Also append every dictation to a log file" to get JSON lines at
+`~/Library/Logs/Aside/dictations.jsonl`, then `tail -f` it while dictating.
+
+## 9. Stop
 
 Quit from the menu-bar icon (**Quit Aside**), then Ctrl-C the Worker.

@@ -32,6 +32,7 @@ final class AppSettings: ObservableObject {
         static let holdRightOption = "holdRightOption"
         static let doubleTapToLatch = "doubleTapToLatch"
         static let transcriptionMode = "transcriptionMode"
+        static let logDictationsToFile = "logDictationsToFile"
     }
 
     static let defaultBackendURL = "http://localhost:8787"
@@ -49,6 +50,8 @@ final class AppSettings: ObservableObject {
     @Published var doubleTapToLatch: Bool { didSet { defaults.set(doubleTapToLatch, forKey: Key.doubleTapToLatch) } }
     /// Where speech becomes text: the Worker's provider, or Parakeet on this Mac.
     @Published var transcriptionMode: TranscriptionMode { didSet { defaults.set(transcriptionMode.rawValue, forKey: Key.transcriptionMode) } }
+    /// Opt-in: append raw and final text of every dictation to ~/Library/Logs/Aside/dictations.jsonl.
+    @Published var logDictationsToFile: Bool { didSet { defaults.set(logDictationsToFile, forKey: Key.logDictationsToFile) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -59,6 +62,7 @@ final class AppSettings: ObservableObject {
             Key.holdRightOption: true,
             Key.doubleTapToLatch: true,
             Key.transcriptionMode: TranscriptionMode.cloud.rawValue,
+            Key.logDictationsToFile: false,
             Key.cleanup: CleanupLevel.medium.rawValue,
         ])
         backendURLString = defaults.string(forKey: Key.backendURL) ?? AppSettings.defaultBackendURL
@@ -68,6 +72,7 @@ final class AppSettings: ObservableObject {
         holdRightOption = defaults.bool(forKey: Key.holdRightOption)
         doubleTapToLatch = defaults.bool(forKey: Key.doubleTapToLatch)
         transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .cloud
+        logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
     }
 
     /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate

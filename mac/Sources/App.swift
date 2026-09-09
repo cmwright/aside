@@ -333,6 +333,11 @@ final class AppController: ObservableObject {
             return
         }
         let outcome = TextInserter.insert(text)
+        DictationHistory.shared.add(DictationRecord(
+            date: Date(), engine: engine, appName: capturedAppName,
+            rawText: response.rawText ?? text, finalText: text,
+            sttMs: Int(response.timing?.stt ?? 0), cleanupMs: Int(response.timing?.cleanup ?? 0),
+            insertion: outcome.historyLabel))
         if let message = outcome.userMessage {
             state = .failed(message)
             StatusOverlay.shared.flash(message, tone: .failure)
@@ -443,6 +448,14 @@ struct AsideApp: App {
         .defaultSize(width: 560, height: 420)
         .defaultPosition(.center)
 
+        Window("Recent Dictations", id: WindowID.history) {
+            HistoryView()
+                .frame(minWidth: 640, idealWidth: 760, minHeight: 380, idealHeight: 460)
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 760, height: 460)
+        .defaultPosition(.center)
+
         Window("Settings", id: WindowID.settings) {
             SettingsView()
                 .environmentObject(settings)
@@ -457,6 +470,7 @@ struct AsideApp: App {
 enum WindowID {
     static let dictionary = "dictionary"
     static let settings = "settings"
+    static let history = "history"
 }
 
 private struct MenuContent: View {
@@ -496,6 +510,8 @@ private struct MenuContent: View {
 
         Divider()
 
+        Button("Recent Dictations…") { open(WindowID.history) }
+            .keyboardShortcut("h")
         Button("Dictionary…") { open(WindowID.dictionary) }
         Button("Settings…") { open(WindowID.settings) }
         // Permissions lives in an AppKit window owned by `Permissions` so the app delegate

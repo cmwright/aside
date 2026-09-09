@@ -13,6 +13,14 @@ enum TextInserter {
         /// Nothing worked; the text is sitting on the clipboard.
         case clipboardOnly
 
+        var historyLabel: String {
+            switch self {
+            case .accessibility: return "Accessibility API"
+            case .paste: return "clipboard + Cmd-V"
+            case .clipboardOnly: return "left on clipboard"
+            }
+        }
+
         var userMessage: String? {
             self == .clipboardOnly ? "Copied to clipboard; paste manually" : nil
         }

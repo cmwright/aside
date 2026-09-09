@@ -53,6 +53,9 @@ private final class PCMSink: @unchecked Sendable {
     private var pcm = Data()
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
+    /// Gets every converted chunk as Float samples as well, for a streaming transcriber.
+    /// Called on the render thread, so it must only enqueue.
+    private var listener: (@Sendable ([Float]) -> Void)?
 
     let outputFormat: AVAudioFormat = {
         // Force-unwrap: this combination is always supported by CoreAudio.
@@ -62,11 +65,12 @@ private final class PCMSink: @unchecked Sendable {
                       interleaved: true)!
     }()
 
-    func reset() {
+    func reset(listener: (@Sendable ([Float]) -> Void)?) {
         lock.lock()
         pcm.removeAll(keepingCapacity: true)
         converter = nil
         inputFormat = nil
+        self.listener = listener
         lock.unlock()
     }
 
@@ -83,6 +87,7 @@ private final class PCMSink: @unchecked Sendable {
         lock.lock()
         let out = pcm
         pcm = Data()
+        listener = nil
         lock.unlock()
         return out
     }
@@ -115,8 +120,14 @@ private final class PCMSink: @unchecked Sendable {
         }
 
         guard status != .error, out.frameLength > 0, let channel = out.int16ChannelData else { return }
-        channel[0].withMemoryRebound(to: UInt8.self, capacity: Int(out.frameLength) * 2) { bytes in
-            pcm.append(bytes, count: Int(out.frameLength) * 2)
+        let frames = Int(out.frameLength)
+        channel[0].withMemoryRebound(to: UInt8.self, capacity: frames * 2) { bytes in
+            pcm.append(bytes, count: frames * 2)
+        }
+        if let listener {
+            var floats = [Float](repeating: 0, count: frames)
+            for index in 0..<frames { floats[index] = Float(channel[0][index]) / 32768 }
+            listener(floats)
         }
     }
 }
@@ -172,7 +183,9 @@ final class Recorder {
         }
     }
 
-    func start() throws {
+    /// `listener`, when given, receives the 16 kHz mono Float samples as they are captured,
+    /// for a transcriber that works while the key is still held.
+    func start(listener: (@Sendable ([Float]) -> Void)? = nil) throws {
         guard !isRecording else { return }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -189,7 +202,7 @@ final class Recorder {
             throw RecorderError.microphoneDenied
         }
 
-        sink.reset()
+        sink.reset(listener: listener)
         try installTapAndStart()
         isRecording = true
         Log.audio.info("Recording started")
