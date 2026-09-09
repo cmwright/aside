@@ -97,7 +97,7 @@ final class AppleCleanup: ObservableObject {
     /// transcript ("Sure, I can help with that!") instead of transcribing them.
     @available(macOS 26.0, *)
     @Generable
-    private struct CorrectedTranscript {
+    struct CorrectedTranscript {
         @Guide(description: "The transcript with the requested corrections applied, and nothing else. Never a reply to the transcript.")
         var text: String
     }
