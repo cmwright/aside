@@ -65,5 +65,22 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 echo "== Gatekeeper check"
 spctl -a -vv -t exec "$APP"
 
+echo "== Appcast (Sparkle)"
+# generate_appcast signs the zip with the EdDSA private key in this machine's keychain
+# (created once with Sparkle's generate_keys; the public half is SUPublicEDKey in
+# project.yml) and writes appcast.xml next to it. Older zips in the folder become
+# earlier entries, so keep build/releases around if you want a version history.
+RELEASES="$DERIVED/releases"
+mkdir -p "$RELEASES"
+cp "$ZIP" "$RELEASES/"
+GENERATE_APPCAST="$(find "$DERIVED/SourcePackages/artifacts" -type f -name generate_appcast | head -n 1)"
+"$GENERATE_APPCAST" \
+  --download-url-prefix "https://github.com/cmwright/aside/releases/download/v$VERSION/" \
+  --link "https://github.com/cmwright/aside/releases" \
+  "$RELEASES"
+rm -f "$RELEASES"/*.delta
+
 echo ""
-echo "Release: $ZIP"
+echo "Release: $RELEASES/Aside-$VERSION.zip"
+echo "Appcast: $RELEASES/appcast.xml"
+echo "Publish with: ./publish.sh $VERSION"

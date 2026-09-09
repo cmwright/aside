@@ -394,6 +394,45 @@ final class AsideTests: XCTestCase {
         XCTAssertEqual(CleanupPrompt.sanitize("  plain  "), "plain")
     }
 
+    // MARK: - Direct providers
+
+    func testChatBodyAddsReasoningEffortOnlyForGptOss() throws {
+        let a = try XCTUnwrap(JSONSerialization.jsonObject(with: DirectClient.chatBody(model: "gpt-oss-120b", system: "s", user: "u")) as? [String: Any])
+        XCTAssertEqual(a["reasoning_effort"] as? String, "low")
+        XCTAssertEqual(a["temperature"] as? Int, 0)
+        XCTAssertEqual((a["messages"] as? [[String: String]])?.count, 2)
+        let b = try XCTUnwrap(JSONSerialization.jsonObject(with: DirectClient.chatBody(model: "llama-3.3-70b", system: "s", user: "u")) as? [String: Any])
+        XCTAssertNil(b["reasoning_effort"])
+    }
+
+    func testVocabularyHintsAndCap() {
+        let entries = [DictionaryEntry(term: "hyper comply", replacement: "HyperComply"),
+                       DictionaryEntry(term: "Parakeet"), DictionaryEntry(term: "parakeet")]
+        XCTAssertEqual(DirectClient.vocabulary(from: entries), ["HyperComply", "hyper comply", "Parakeet"])
+        XCTAssertEqual(DirectClient.vocabularyPrompt(["a", "b"]), "Vocabulary: a, b.")
+        XCTAssertNil(DirectClient.vocabularyPrompt([]))
+        XCTAssertEqual(DirectClient.vocabularyPrompt(["aaaa", "bbbb"], maxChars: 7), "Vocabulary: aaaa.")
+    }
+
+    func testDirectErrorMessageShapes() {
+        XCTAssertEqual(DirectClient.errorMessage(from: Data(#"{"error":{"message":"bad key"}}"#.utf8)), "bad key")
+        XCTAssertEqual(DirectClient.errorMessage(from: Data(#"{"error":"nope"}"#.utf8)), "nope")
+        XCTAssertEqual(DirectClient.errorMessage(from: Data(#"{"message":"m"}"#.utf8)), "m")
+        XCTAssertEqual(DirectClient.errorMessage(from: Data("plain text".utf8)), "plain text")
+        XCTAssertEqual(DirectClient.errorMessage(from: Data()), "no details")
+    }
+
+    func testResolveEndpointUsesPresetDefaultsAndOverrides() {
+        let cerebras = AppSettings.resolve(preset: .cerebras, baseURLOverride: "", modelOverride: "", stt: false)
+        XCTAssertEqual(cerebras?.baseURL.absoluteString, "https://api.cerebras.ai/v1")
+        XCTAssertEqual(cerebras?.model, "gpt-oss-120b")
+        XCTAssertNil(AppSettings.resolve(preset: .cerebras, baseURLOverride: "", modelOverride: "", stt: true), "Cerebras has no speech endpoint")
+        let custom = AppSettings.resolve(preset: .custom, baseURLOverride: "https://x.example/v1/", modelOverride: " m ", stt: false)
+        XCTAssertEqual(custom?.baseURL.absoluteString, "https://x.example/v1")
+        XCTAssertEqual(custom?.model, "m")
+        XCTAssertNil(AppSettings.resolve(preset: .custom, baseURLOverride: "", modelOverride: "m", stt: false))
+    }
+
     // MARK: - Helpers
 
     /// 16 kHz mono Int16 PCM of `text` spoken by the system voice.

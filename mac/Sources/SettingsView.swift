@@ -7,10 +7,33 @@ struct SettingsView: View {
     @ObservedObject private var appleCleanup = AppleCleanup.shared
     @State private var healthResult: String?
     @State private var checking = false
+    @State private var chatKey = ""
+    @State private var sttKey = ""
+    @State private var chatTest: String?
+    @State private var sttTest: String?
 
     var body: some View {
         Form {
-            Section("Backend") {
+            Section("Direct providers (your own API keys)") {
+                directProviderRows(
+                    title: "Cleanup provider", presets: ProviderPreset.all,
+                    providerID: $settings.directChatProvider, baseURL: $settings.directChatBaseURL,
+                    model: $settings.directChatModel, key: $chatKey, stt: false, result: $chatTest)
+                Divider()
+                directProviderRows(
+                    title: "Speech provider", presets: ProviderPreset.sttCapable,
+                    providerID: $settings.directSttProvider, baseURL: $settings.directSttBaseURL,
+                    model: $settings.directSttModel, key: $sttKey, stt: true, result: $sttTest)
+                Text("Any service that speaks the OpenAI API works. Keys are stored in your login keychain and are sent only to that provider.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .onAppear { reloadKeys() }
+            .onChange(of: settings.directChatProvider) { _, _ in reloadKeys(); chatTest = nil }
+            .onChange(of: settings.directSttProvider) { _, _ in reloadKeys(); sttTest = nil }
+
+            Section("Worker backend (optional, self-hosted)") {
                 TextField("URL", text: $settings.backendURLString, prompt: Text(AppSettings.defaultBackendURL))
                     .textFieldStyle(.roundedBorder)
                 if settings.backendURL == nil {
@@ -110,6 +133,70 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func directProviderRows(
+        title: String, presets: [ProviderPreset], providerID: Binding<String>, baseURL: Binding<String>,
+        model: Binding<String>, key: Binding<String>, stt: Bool, result: Binding<String?>
+    ) -> some View {
+        let preset = ProviderPreset.preset(id: providerID.wrappedValue)
+        Picker(title, selection: providerID) {
+            ForEach(presets) { Text($0.name).tag($0.id) }
+        }
+        if preset.id == ProviderPreset.custom.id || (stt ? preset.sttBaseURL : preset.chatBaseURL) == nil {
+            TextField("Base URL", text: baseURL, prompt: Text("https://host/v1"))
+                .textFieldStyle(.roundedBorder)
+        }
+        TextField("Model", text: model, prompt: Text((stt ? preset.defaultSttModel : preset.defaultChatModel) ?? "model id"))
+            .textFieldStyle(.roundedBorder)
+        if preset.needsKey {
+            HStack {
+                SecureField("API key", text: key)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: key.wrappedValue) { _, value in APIKeyStore.set(value, for: preset.id) }
+                if let url = preset.keyURL, let link = URL(string: url) {
+                    Link("Get a key", destination: link).font(.caption)
+                }
+            }
+        }
+        HStack {
+            Button("Test") { testProvider(stt: stt, result: result) }
+            if let text = result.wrappedValue {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(text.hasPrefix("OK") ? .green : .red)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func reloadKeys() {
+        chatKey = APIKeyStore.key(for: settings.directChatProvider) ?? ""
+        sttKey = APIKeyStore.key(for: settings.directSttProvider) ?? ""
+    }
+
+    private func testProvider(stt: Bool, result: Binding<String?>) {
+        guard let endpoint = stt ? settings.directSttEndpoint() : settings.directChatEndpoint() else {
+            result.wrappedValue = "Base URL or model is missing."
+            return
+        }
+        result.wrappedValue = "Checking…"
+        Task { @MainActor in
+            do {
+                let models = try await DirectClient().listModels(endpoint: endpoint)
+                if models.isEmpty {
+                    result.wrappedValue = "OK: reachable (model list not exposed)"
+                } else if models.contains(endpoint.model) {
+                    result.wrappedValue = "OK: \(endpoint.model) available (\(models.count) models)"
+                } else {
+                    result.wrappedValue = "Reachable, but \(endpoint.model) is not in its \(models.count) models"
+                }
+            } catch {
+                result.wrappedValue = error.localizedDescription
+            }
+        }
     }
 
     private func checkHealth() {

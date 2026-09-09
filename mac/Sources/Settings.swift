@@ -34,6 +34,12 @@ final class AppSettings: ObservableObject {
         static let transcriptionMode = "transcriptionMode"
         static let logDictationsToFile = "logDictationsToFile"
         static let cleanupEngine = "cleanupEngine"
+        static let directChatProvider = "directChatProvider"
+        static let directChatModel = "directChatModel"
+        static let directChatBaseURL = "directChatBaseURL"
+        static let directSttProvider = "directSttProvider"
+        static let directSttModel = "directSttModel"
+        static let directSttBaseURL = "directSttBaseURL"
     }
 
     static let defaultBackendURL = "http://localhost:8787"
@@ -55,6 +61,14 @@ final class AppSettings: ObservableObject {
     @Published var logDictationsToFile: Bool { didSet { defaults.set(logDictationsToFile, forKey: Key.logDictationsToFile) } }
     /// Who runs the cleanup pass: the Worker's model, or Apple's on-device model.
     @Published var cleanupEngine: CleanupEngine { didSet { defaults.set(cleanupEngine.rawValue, forKey: Key.cleanupEngine) } }
+    /// Direct mode: which OpenAI-compatible service runs cleanup, and which one runs speech.
+    /// Empty model / base URL strings mean "use the preset's default".
+    @Published var directChatProvider: String { didSet { defaults.set(directChatProvider, forKey: Key.directChatProvider) } }
+    @Published var directChatModel: String { didSet { defaults.set(directChatModel, forKey: Key.directChatModel) } }
+    @Published var directChatBaseURL: String { didSet { defaults.set(directChatBaseURL, forKey: Key.directChatBaseURL) } }
+    @Published var directSttProvider: String { didSet { defaults.set(directSttProvider, forKey: Key.directSttProvider) } }
+    @Published var directSttModel: String { didSet { defaults.set(directSttModel, forKey: Key.directSttModel) } }
+    @Published var directSttBaseURL: String { didSet { defaults.set(directSttBaseURL, forKey: Key.directSttBaseURL) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -68,6 +82,8 @@ final class AppSettings: ObservableObject {
             Key.logDictationsToFile: false,
             Key.cleanupEngine: CleanupEngine.worker.rawValue,
             Key.cleanup: CleanupLevel.medium.rawValue,
+            Key.directChatProvider: ProviderPreset.cerebras.id,
+            Key.directSttProvider: ProviderPreset.groq.id,
         ])
         backendURLString = defaults.string(forKey: Key.backendURL) ?? AppSettings.defaultBackendURL
         backendToken = defaults.string(forKey: Key.backendToken) ?? ""
@@ -78,6 +94,12 @@ final class AppSettings: ObservableObject {
         transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .cloud
         logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
         cleanupEngine = CleanupEngine(rawValue: defaults.string(forKey: Key.cleanupEngine) ?? "") ?? .worker
+        directChatProvider = defaults.string(forKey: Key.directChatProvider) ?? ProviderPreset.cerebras.id
+        directChatModel = defaults.string(forKey: Key.directChatModel) ?? ""
+        directChatBaseURL = defaults.string(forKey: Key.directChatBaseURL) ?? ""
+        directSttProvider = defaults.string(forKey: Key.directSttProvider) ?? ProviderPreset.groq.id
+        directSttModel = defaults.string(forKey: Key.directSttModel) ?? ""
+        directSttBaseURL = defaults.string(forKey: Key.directSttBaseURL) ?? ""
     }
 
     /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate
@@ -117,6 +139,29 @@ final class AppSettings: ObservableObject {
         return url
     }
 
+    /// Resolved cleanup endpoint for Direct mode, or nil when the base URL is unusable.
+    func directChatEndpoint() -> DirectEndpoint? {
+        AppSettings.resolve(preset: ProviderPreset.preset(id: directChatProvider),
+                            baseURLOverride: directChatBaseURL, modelOverride: directChatModel, stt: false)
+    }
+
+    /// Resolved speech endpoint for Direct mode, or nil when the provider has no STT or the URL is unusable.
+    func directSttEndpoint() -> DirectEndpoint? {
+        AppSettings.resolve(preset: ProviderPreset.preset(id: directSttProvider),
+                            baseURLOverride: directSttBaseURL, modelOverride: directSttModel, stt: true)
+    }
+
+    nonisolated static func resolve(preset: ProviderPreset, baseURLOverride: String, modelOverride: String, stt: Bool) -> DirectEndpoint? {
+        let base = baseURLOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (stt ? preset.sttBaseURL : preset.chatBaseURL) ?? ""
+            : baseURLOverride
+        let model = modelOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (stt ? preset.defaultSttModel : preset.defaultChatModel) ?? ""
+            : modelOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = normalizedURL(from: base), !model.isEmpty else { return nil }
+        return DirectEndpoint(providerName: preset.name, baseURL: url, apiKey: APIKeyStore.key(for: preset.id), model: model)
+    }
+
     var trimmedToken: String? {
         let token = backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
         return token.isEmpty ? nil : token
@@ -124,29 +169,33 @@ final class AppSettings: ObservableObject {
 }
 
 enum TranscriptionMode: String, CaseIterable, Identifiable, Sendable {
-    case cloud
     case local
+    case direct
+    case cloud
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .cloud: return "Cloud (the Worker's provider)"
         case .local: return "On this Mac (Parakeet v3)"
+        case .direct: return "A provider, directly with your API key"
+        case .cloud: return "The Worker (self-hosted backend)"
         }
     }
 }
 
 enum CleanupEngine: String, CaseIterable, Identifiable, Sendable {
-    case worker
+    case direct
     case apple
+    case worker
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .worker: return "Cloud (the Worker's model)"
+        case .direct: return "A provider, directly with your API key"
         case .apple: return "Apple on-device model"
+        case .worker: return "The Worker (self-hosted backend)"
         }
     }
 }

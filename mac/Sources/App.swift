@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import KeyboardShortcuts
+import Sparkle
 import SwiftUI
 
 extension KeyboardShortcuts.Name {
@@ -52,6 +53,7 @@ final class AppController: ObservableObject {
 
     private let recorder = Recorder()
     private let client = BackendClient()
+    private let direct = DirectClient()
     private let settings = AppSettings.shared
     private let dictionary = DictionaryStore.shared
 
@@ -263,6 +265,11 @@ final class AppController: ObservableObject {
         }
         session?.cancel()
 
+        if settings.transcriptionMode == .direct {
+            transcribeDirect(audio)
+            return
+        }
+
         StatusOverlay.shared.show("Transcribing", tone: .working)
 
         guard let baseURL = settings.backendURL else {
@@ -301,6 +308,38 @@ final class AppController: ObservableObject {
         }
     }
 
+    /// Speech straight from the app to an OpenAI-compatible provider, then the cleanup stage.
+    private func transcribeDirect(_ audio: Data) {
+        guard let endpoint = settings.directSttEndpoint() else {
+            fail("Pick a speech provider with a model and base URL in Settings → Direct providers.")
+            return
+        }
+        let preset = ProviderPreset.preset(id: settings.directSttProvider)
+        if preset.needsKey && (endpoint.apiKey ?? "").isEmpty {
+            fail(DirectError.missingKey(preset.name).localizedDescription)
+            return
+        }
+        StatusOverlay.shared.show("Transcribing via \(endpoint.providerName)", tone: .working)
+        let plan = cleanupPlan()
+        let vocabulary = DirectClient.vocabulary(from: dictionary.entries)
+        let direct = self.direct
+
+        Task { @MainActor in
+            do {
+                let started = Date()
+                let raw = try await direct.transcribe(audio: audio, endpoint: endpoint, vocabulary: vocabulary)
+                let sttMs = Date().timeIntervalSince(started) * 1000
+                let result = try await self.runCleanup(raw: raw, plan: plan)
+                self.finish(with: TranscriptionResponse(
+                    text: result.text, rawText: raw,
+                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
+                    engine: .direct, cleanupLabel: result.label)
+            } catch {
+                self.fail(error.localizedDescription)
+            }
+        }
+    }
+
     struct CleanupPlan {
         var engine: CleanupEngine
         var level: CleanupLevel
@@ -308,11 +347,15 @@ final class AppController: ObservableObject {
         var baseURL: URL?
         var token: String?
         var appName: String?
+        var direct: DirectEndpoint?
+        var directNeedsKey: Bool
     }
 
     private func cleanupPlan() -> CleanupPlan {
         CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
-                    baseURL: settings.backendURL, token: settings.trimmedToken, appName: capturedAppName)
+                    baseURL: settings.backendURL, token: settings.trimmedToken, appName: capturedAppName,
+                    direct: settings.directChatEndpoint(),
+                    directNeedsKey: ProviderPreset.preset(id: settings.directChatProvider).needsKey)
     }
 
     /// The cleanup stage for a transcript already in hand. The Worker applies the dictionary
@@ -332,6 +375,26 @@ final class AppController: ObservableObject {
                 baseURL: baseURL, token: plan.token, text: trimmed,
                 dictionaryJSON: DictionaryCodec.encodeForRequest(plan.entries), cleanup: plan.level, appName: plan.appName))
             return (response.text, Int(response.timing?.cleanup ?? Date().timeIntervalSince(started) * 1000), "Worker")
+        case .direct:
+            guard let endpoint = plan.direct else {
+                throw DirectError.badResponse("a usable cleanup provider (check Settings → Direct providers)")
+            }
+            if plan.directNeedsKey && (endpoint.apiKey ?? "").isEmpty {
+                throw DirectError.missingKey(endpoint.providerName)
+            }
+            StatusOverlay.shared.show("Cleaning up via \(endpoint.providerName)", tone: .working)
+            let reply = try await direct.chat(
+                endpoint: endpoint,
+                system: CleanupPrompt.instructions(level: plan.level, entries: plan.entries),
+                user: CleanupPrompt.userPrompt(trimmed))
+            var text = CleanupPrompt.sanitize(reply)
+            var label = "Direct: \(endpoint.label)"
+            if text.isEmpty || AppleCleanup.similarity(raw: trimmed, cleaned: text) < 0.5 {
+                label += " (off-script; raw text kept)"
+                text = trimmed
+            }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            return (DictionaryReplacer.apply(text, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
         case .apple:
             StatusOverlay.shared.show("Cleaning up on this Mac", tone: .working)
             var text = trimmed
@@ -412,7 +475,12 @@ final class AppController: ObservableObject {
             state = .idle
             StatusOverlay.shared.hide()
         }
-        let engineLabel = engine == .local ? "on this Mac (Parakeet v3)" : "cloud (Worker)"
+        let engineLabel: String
+        switch engine {
+        case .local: engineLabel = "on this Mac (Parakeet v3)"
+        case .direct: engineLabel = "provider, direct"
+        case .cloud: engineLabel = "cloud (Worker)"
+        }
         if let timing = response.timing {
             let cleanupPart = timing.cleanup > 0 ? ", cleanup \(Int(timing.cleanup)) ms" : ", no cleanup call"
             lastRunSummary = "Last: \(engineLabel), speech \(Int(timing.stt)) ms\(cleanupPart)"
@@ -460,6 +528,9 @@ final class AppController: ObservableObject {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Sparkle. Starting the updater here also schedules the daily background check.
+    @MainActor static let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.accessory)
@@ -553,6 +624,7 @@ private struct MenuContent: View {
     private var engineLine: String {
         switch settings.transcriptionMode {
         case .cloud: return "Engine: cloud (Worker)"
+        case .direct: return "Engine: \(settings.directSttEndpoint()?.label ?? "direct provider (not configured)")"
         case .local:
             switch localTranscriber.state {
             case .ready: return "Engine: on this Mac (Parakeet v3), ready"
@@ -588,6 +660,14 @@ private struct MenuContent: View {
         // Permissions lives in an AppKit window owned by `Permissions` so the app delegate
         // can also open it at launch, where SwiftUI's `openWindow` is out of reach.
         Button("Permissions…") { Permissions.shared.showWindow() }
+
+        Divider()
+
+        Button("Check for Updates…") {
+            NSApp.activate(ignoringOtherApps: true)
+            AppDelegate.updater.checkForUpdates(nil)
+        }
+        Text("Aside \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
 
         Divider()
 

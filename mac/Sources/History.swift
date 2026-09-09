@@ -15,7 +15,13 @@ struct DictationRecord: Identifiable, Sendable {
     let insertion: String
     let cleanupLabel: String
 
-    var engineLabel: String { engine == .local ? "Parakeet v3 (on this Mac)" : "cloud (Worker)" }
+    var engineLabel: String {
+        switch engine {
+        case .local: return "Parakeet v3 (on this Mac)"
+        case .direct: return "provider, direct"
+        case .cloud: return "cloud (Worker)"
+        }
+    }
     var changed: Bool { rawText.trimmingCharacters(in: .whitespacesAndNewlines) != finalText }
 }
 

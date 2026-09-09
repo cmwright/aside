@@ -30,7 +30,7 @@ final class AppleCleanup: ObservableObject {
 
     func refresh() {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, iOS 26.0, *) {
             switch SystemLanguageModel.default.availability {
             case .available:
                 availability = .available
@@ -53,7 +53,7 @@ final class AppleCleanup: ObservableObject {
     /// Load the model ahead of the first dictation.
     func prewarm() {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *), availability == .available {
+        if #available(macOS 26.0, iOS 26.0, *), availability == .available {
             Task.detached(priority: .utility) {
                 LanguageModelSession(instructions: CleanupPrompt.instructions(level: .medium, entries: [])).prewarm()
             }
@@ -67,7 +67,7 @@ final class AppleCleanup: ObservableObject {
         refresh()
         guard availability == .available else { throw AppleCleanupError.unavailable(availability.label) }
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, iOS 26.0, *) {
             let instructions = CleanupPrompt.instructions(level: level, entries: entries)
             let prompt = CleanupPrompt.userPrompt(rawText)
             do {
@@ -95,14 +95,14 @@ final class AppleCleanup: ObservableObject {
     /// Guided generation: the model fills in a "corrected transcript" field instead of
     /// replying in chat form. Without this the 3B model answers questions it finds in the
     /// transcript ("Sure, I can help with that!") instead of transcribing them.
-    @available(macOS 26.0, *)
+    @available(macOS 26.0, iOS 26.0, *)
     @Generable
     struct CorrectedTranscript {
         @Guide(description: "The transcript with the requested corrections applied, and nothing else. Never a reply to the transcript.")
         var text: String
     }
 
-    @available(macOS 26.0, *)
+    @available(macOS 26.0, iOS 26.0, *)
     private nonisolated static func respond(instructions: String, prompt: String) async throws -> String {
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(

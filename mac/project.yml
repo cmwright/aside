@@ -14,6 +14,9 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     from: "0.12.4"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.9.6"
 
 # Signing comes from Signing.xcconfig (git-ignored; see Signing.xcconfig.example).
 configFiles:
@@ -23,8 +26,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Manual
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     DEAD_CODE_STRIPPING: "YES"
@@ -56,6 +59,7 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: FluidAudio
+      - package: Sparkle
     # Only the microphone entitlement, which the Hardened Runtime requires. App Sandbox
     # stays OFF: the Accessibility API and global event monitors do not work sandboxed.
     entitlements:
@@ -76,6 +80,12 @@ targets:
       properties:
         CFBundleName: Aside
         CFBundleIconFile: AppIcon
+        # Sparkle updates. The appcast is published as a GitHub Release asset by mac/publish.sh;
+        # the public key pairs with the EdDSA private key in the release machine's keychain.
+        SUFeedURL: https://github.com/cmwright/aside/releases/latest/download/appcast.xml
+        SUPublicEDKey: NUP11ESWdzmTd6Ubed5HlpaRHw7Vr7FqGMtlx8t2Pmc=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
         CFBundleDisplayName: Aside
         CFBundlePackageType: APPL
         CFBundleShortVersionString: $(MARKETING_VERSION)

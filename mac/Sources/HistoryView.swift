@@ -16,7 +16,7 @@ struct HistoryView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(record.finalText.isEmpty ? "(nothing)" : record.finalText)
                         .lineLimit(2)
-                    Text("\(record.date.formatted(date: .omitted, time: .standard)) · \(record.engine == .local ? "local" : "cloud")\(record.changed ? " · edited by cleanup" : "")")
+                    Text("\(record.date.formatted(date: .omitted, time: .standard)) · \(record.engine == .local ? "local" : record.engine == .direct ? "direct" : "worker")\(record.changed ? " · edited by cleanup" : "")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
