@@ -13,6 +13,7 @@ struct DictationRecord: Identifiable, Sendable {
     let sttMs: Int
     let cleanupMs: Int
     let insertion: String
+    let cleanupLabel: String
 
     var engineLabel: String { engine == .local ? "Parakeet v3 (on this Mac)" : "cloud (Worker)" }
     var changed: Bool { rawText.trimmingCharacters(in: .whitespacesAndNewlines) != finalText }
@@ -46,12 +47,13 @@ final class DictationHistory: ObservableObject {
     private func appendToFile(_ record: DictationRecord) {
         struct Line: Encodable {
             let time: String, engine: String, app: String?, raw: String, final: String
-            let stt_ms: Int, cleanup_ms: Int, insertion: String
+            let stt_ms: Int, cleanup_ms: Int, insertion: String, cleanup: String
         }
         let line = Line(
             time: ISO8601DateFormatter().string(from: record.date), engine: record.engine.rawValue,
             app: record.appName, raw: record.rawText, final: record.finalText,
-            stt_ms: record.sttMs, cleanup_ms: record.cleanupMs, insertion: record.insertion)
+            stt_ms: record.sttMs, cleanup_ms: record.cleanupMs, insertion: record.insertion,
+            cleanup: record.cleanupLabel)
         do {
             let url = DictationHistory.logFileURL
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

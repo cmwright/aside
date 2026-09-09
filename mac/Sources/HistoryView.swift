@@ -29,6 +29,7 @@ struct HistoryView: View {
                 if let record = selected {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
                         GridRow { Text("Engine").foregroundStyle(.secondary); Text(record.engineLabel) }
+                        GridRow { Text("Cleanup").foregroundStyle(.secondary); Text(record.cleanupLabel) }
                         GridRow { Text("App").foregroundStyle(.secondary); Text(record.appName ?? "unknown") }
                         GridRow {
                             Text("Timing").foregroundStyle(.secondary)

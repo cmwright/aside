@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var localTranscriber = LocalTranscriber.shared
+    @ObservedObject private var appleCleanup = AppleCleanup.shared
     @State private var healthResult: String?
     @State private var checking = false
 
@@ -64,6 +65,27 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.radioGroup)
+
+                Picker("Cleanup engine", selection: $settings.cleanupEngine) {
+                    ForEach(CleanupEngine.allCases) { engine in
+                        Text(engine.title).tag(engine)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .disabled(settings.cleanup == .none)
+                .onChange(of: settings.cleanupEngine) { _, engine in
+                    appleCleanup.refresh()
+                    if engine == .apple { appleCleanup.prewarm() }
+                }
+                if settings.cleanupEngine == .apple {
+                    Text(appleCleanup.availability.label)
+                        .font(.caption)
+                        .foregroundStyle(appleCleanup.availability == .available ? .green : .red)
+                    Text("Apple Intelligence's built-in model runs the cleanup pass and the dictionary is applied locally, so with on-device transcription nothing leaves this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Trigger") {

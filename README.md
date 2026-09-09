@@ -112,6 +112,14 @@ on each side (the same layout its whole-file path uses), so on key-up only the l
 seconds are left to decode. The overlay says "Finishing up". If the model is still loading
 when you press the key, the whole recording is transcribed after key-up as before.
 
+## Cleanup on this Mac (optional)
+
+Settings → Transcription → Cleanup engine → **Apple on-device model** uses the model that
+ships with Apple Intelligence (macOS 26+, must be switched on in System Settings) for the
+cleanup pass, with the same instructions the Worker uses. The dictionary post-pass runs in
+Swift. Combined with on-device transcription, no audio or text leaves the Mac and the
+Worker is not needed at all. Recent Dictations shows which engine cleaned each entry.
+
 ## The HTTP contract
 
 `POST {BACKEND_URL}/v1/audio/transcriptions`, `multipart/form-data`:

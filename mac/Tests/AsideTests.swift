@@ -345,6 +345,49 @@ final class AsideTests: XCTestCase {
                                  "\(distance) word edits between whole-clip and streaming transcripts")
     }
 
+    // MARK: - Dictionary post-pass (Swift port)
+
+    private let hc = [DictionaryEntry(term: "hyper comply", replacement: "HyperComply")]
+
+    func testReplacerBasicsMatchWorker() {
+        XCTAssertEqual(DictionaryReplacer.apply("a test of hyper comply dictation", entries: hc), "a test of HyperComply dictation")
+        XCTAssertEqual(DictionaryReplacer.apply("Hyper Comply rocks", entries: hc), "HyperComply rocks")
+        XCTAssertEqual(DictionaryReplacer.apply("hyper-comply and hypercomply", entries: hc), "HyperComply and HyperComply")
+        XCTAssertEqual(DictionaryReplacer.apply("hypercomplying is not a word", entries: hc), "hypercomplying is not a word")
+    }
+
+    func testReplacerWordBoundariesAndEmpty() {
+        let e = [DictionaryEntry(term: "comply", replacement: "Comply!")]
+        XCTAssertEqual(DictionaryReplacer.apply("compliance means you comply.", entries: e), "compliance means you Comply!.")
+        XCTAssertEqual(DictionaryReplacer.apply("nothing here", entries: []), "nothing here")
+        XCTAssertEqual(DictionaryReplacer.apply("", entries: hc), "")
+        XCTAssertEqual(DictionaryReplacer.apply("keep me", entries: [DictionaryEntry(term: "keep", replacement: nil)]), "keep me")
+    }
+
+    func testReplacerLongestWinsAndNoCascade() {
+        let e = [DictionaryEntry(term: "a", replacement: "b"), DictionaryEntry(term: "b", replacement: "c"),
+                 DictionaryEntry(term: "big a", replacement: "BIG")]
+        XCTAssertEqual(DictionaryReplacer.apply("a b big a", entries: e), "b c BIG")
+    }
+
+    func testReplacerEscapesRegexMetacharacters() {
+        let e = [DictionaryEntry(term: "c++", replacement: "C++")]
+        XCTAssertEqual(DictionaryReplacer.apply("i like c++ a lot", entries: e), "i like C++ a lot")
+    }
+
+    // MARK: - Cleanup prompt
+
+    func testCleanupInstructionsMirrorWorker() {
+        let light = CleanupPrompt.instructions(level: .light, entries: [])
+        let medium = CleanupPrompt.instructions(level: .medium, entries: hc)
+        XCTAssertTrue(light.contains("Do not remove filler words"))
+        XCTAssertFalse(light.contains("User dictionary"))
+        XCTAssertTrue(medium.contains("Remove filler words"))
+        XCTAssertTrue(medium.contains("sounds like \"hyper comply\", write it as \"HyperComply\""))
+        XCTAssertEqual(CleanupPrompt.sanitize("\"Hello there.\""), "Hello there.")
+        XCTAssertEqual(CleanupPrompt.sanitize("  plain  "), "plain")
+    }
+
     // MARK: - Helpers
 
     /// 16 kHz mono Int16 PCM of `text` spoken by the system voice.

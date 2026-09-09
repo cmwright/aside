@@ -33,6 +33,7 @@ final class AppSettings: ObservableObject {
         static let doubleTapToLatch = "doubleTapToLatch"
         static let transcriptionMode = "transcriptionMode"
         static let logDictationsToFile = "logDictationsToFile"
+        static let cleanupEngine = "cleanupEngine"
     }
 
     static let defaultBackendURL = "http://localhost:8787"
@@ -52,6 +53,8 @@ final class AppSettings: ObservableObject {
     @Published var transcriptionMode: TranscriptionMode { didSet { defaults.set(transcriptionMode.rawValue, forKey: Key.transcriptionMode) } }
     /// Opt-in: append raw and final text of every dictation to ~/Library/Logs/Aside/dictations.jsonl.
     @Published var logDictationsToFile: Bool { didSet { defaults.set(logDictationsToFile, forKey: Key.logDictationsToFile) } }
+    /// Who runs the cleanup pass: the Worker's model, or Apple's on-device model.
+    @Published var cleanupEngine: CleanupEngine { didSet { defaults.set(cleanupEngine.rawValue, forKey: Key.cleanupEngine) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -63,6 +66,7 @@ final class AppSettings: ObservableObject {
             Key.doubleTapToLatch: true,
             Key.transcriptionMode: TranscriptionMode.cloud.rawValue,
             Key.logDictationsToFile: false,
+            Key.cleanupEngine: CleanupEngine.worker.rawValue,
             Key.cleanup: CleanupLevel.medium.rawValue,
         ])
         backendURLString = defaults.string(forKey: Key.backendURL) ?? AppSettings.defaultBackendURL
@@ -73,6 +77,7 @@ final class AppSettings: ObservableObject {
         doubleTapToLatch = defaults.bool(forKey: Key.doubleTapToLatch)
         transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .cloud
         logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
+        cleanupEngine = CleanupEngine(rawValue: defaults.string(forKey: Key.cleanupEngine) ?? "") ?? .worker
     }
 
     /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate
@@ -128,6 +133,20 @@ enum TranscriptionMode: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .cloud: return "Cloud (the Worker's provider)"
         case .local: return "On this Mac (Parakeet v3)"
+        }
+    }
+}
+
+enum CleanupEngine: String, CaseIterable, Identifiable, Sendable {
+    case worker
+    case apple
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .worker: return "Cloud (the Worker's model)"
+        case .apple: return "Apple on-device model"
         }
     }
 }

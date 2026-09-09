@@ -270,12 +270,13 @@ final class AppController: ObservableObject {
             return
         }
 
+        let plan = cleanupPlan()
         let request = TranscriptionRequest(
             baseURL: baseURL,
             token: settings.trimmedToken,
             audio: audio,
             dictionaryJSON: DictionaryCodec.encodeForRequest(dictionary.entries),
-            cleanup: settings.cleanup,
+            cleanup: plan.engine == .worker ? plan.level : .none,
             appName: capturedAppName
         )
         let client = self.client
@@ -283,15 +284,74 @@ final class AppController: ObservableObject {
         Task { @MainActor in
             do {
                 let response = try await client.transcribe(request)
-                self.finish(with: response, engine: .cloud)
+                if plan.engine == .worker {
+                    self.finish(with: response, engine: .cloud, cleanupLabel: plan.level == .none ? "none" : "Worker")
+                    return
+                }
+                let raw = response.rawText ?? response.text
+                let sttMs = response.timing?.stt ?? 0
+                let result = try await self.runCleanup(raw: raw, plan: plan)
+                self.finish(with: TranscriptionResponse(
+                    text: result.text, rawText: raw,
+                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
+                    engine: .cloud, cleanupLabel: result.label)
             } catch {
                 self.fail(error.localizedDescription)
             }
         }
     }
 
-    /// On-device Parakeet, then the Worker's text-only cleanup route unless nothing
-    /// server-side would change the text. With a streaming session most of the audio is
+    struct CleanupPlan {
+        var engine: CleanupEngine
+        var level: CleanupLevel
+        var entries: [DictionaryEntry]
+        var baseURL: URL?
+        var token: String?
+        var appName: String?
+    }
+
+    private func cleanupPlan() -> CleanupPlan {
+        CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
+                    baseURL: settings.backendURL, token: settings.trimmedToken, appName: capturedAppName)
+    }
+
+    /// The cleanup stage for a transcript already in hand. The Worker applies the dictionary
+    /// post-pass itself; every other path runs the Swift port so the result is the same.
+    private func runCleanup(raw: String, plan: CleanupPlan) async throws -> (text: String, ms: Int, label: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return ("", 0, "none") }
+        guard plan.level != .none else {
+            return (DictionaryReplacer.apply(trimmed, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines), 0, "none")
+        }
+        let started = Date()
+        switch plan.engine {
+        case .worker:
+            guard let baseURL = plan.baseURL else { throw BackendError.badURL }
+            StatusOverlay.shared.show("Cleaning up", tone: .working)
+            let response = try await client.cleanup(CleanupRequest(
+                baseURL: baseURL, token: plan.token, text: trimmed,
+                dictionaryJSON: DictionaryCodec.encodeForRequest(plan.entries), cleanup: plan.level, appName: plan.appName))
+            return (response.text, Int(response.timing?.cleanup ?? Date().timeIntervalSince(started) * 1000), "Worker")
+        case .apple:
+            StatusOverlay.shared.show("Cleaning up on this Mac", tone: .working)
+            var text = trimmed
+            var label = "Apple on-device model"
+            do {
+                text = try await AppleCleanup.shared.clean(trimmed, level: plan.level, entries: plan.entries)
+            } catch let error as AppleCleanupError {
+                if case .declined(let why) = error {
+                    label = "Apple model declined (\(why)); raw text kept"
+                    Log.app.notice("Apple cleanup declined: \(why, privacy: .public)")
+                } else {
+                    throw error
+                }
+            }
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            return (DictionaryReplacer.apply(text, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
+        }
+    }
+
+    /// On-device Parakeet, then whichever cleanup engine is selected. With a streaming session most of the audio is
     /// already decoded; without one (model still loading) the whole recording runs now.
     private func transcribeLocally(_ audio: Data, session: StreamingSession?) {
         let transcriber = LocalTranscriber.shared
@@ -301,13 +361,7 @@ final class AppController: ObservableObject {
             tone: .working
         )
         let pcm = WAV.pcm16(fromFile: audio)
-        let needsServer = settings.cleanup != .none || dictionary.entries.contains { $0.wire.replacement != nil }
-        let baseURL = settings.backendURL
-        let token = settings.trimmedToken
-        let dictionaryJSON = DictionaryCodec.encodeForRequest(dictionary.entries)
-        let cleanup = settings.cleanup
-        let appName = capturedAppName
-        let client = self.client
+        let plan = cleanupPlan()
 
         Task { @MainActor in
             do {
@@ -325,32 +379,18 @@ final class AppController: ObservableObject {
                     raw = try await transcriber.transcribe(pcm16: pcm)
                 }
                 let sttMs = Date().timeIntervalSince(started) * 1000
-                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty || !needsServer {
-                    self.finish(with: TranscriptionResponse(
-                        text: trimmed, rawText: raw,
-                        timing: .init(stt: sttMs, cleanup: 0, total: sttMs)), engine: .local)
-                    return
-                }
-                guard let baseURL else {
-                    self.fail(BackendError.badURL.localizedDescription)
-                    return
-                }
-                StatusOverlay.shared.show("Cleaning up", tone: .working)
-                var response = try await client.cleanup(CleanupRequest(
-                    baseURL: baseURL, token: token, text: raw,
-                    dictionaryJSON: dictionaryJSON, cleanup: cleanup, appName: appName))
-                if let timing = response.timing {
-                    response.timing = .init(stt: sttMs, cleanup: timing.cleanup, total: sttMs + timing.total)
-                }
-                self.finish(with: response, engine: .local)
+                let result = try await self.runCleanup(raw: raw, plan: plan)
+                self.finish(with: TranscriptionResponse(
+                    text: result.text, rawText: raw,
+                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
+                    engine: .local, cleanupLabel: result.label)
             } catch {
                 self.fail(error.localizedDescription)
             }
         }
     }
 
-    private func finish(with response: TranscriptionResponse, engine: TranscriptionMode) {
+    private func finish(with response: TranscriptionResponse, engine: TranscriptionMode, cleanupLabel: String) {
         let text = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         lastText = text
         guard !text.isEmpty else {
@@ -363,7 +403,7 @@ final class AppController: ObservableObject {
             date: Date(), engine: engine, appName: capturedAppName,
             rawText: response.rawText ?? text, finalText: text,
             sttMs: Int(response.timing?.stt ?? 0), cleanupMs: Int(response.timing?.cleanup ?? 0),
-            insertion: outcome.historyLabel))
+            insertion: outcome.historyLabel, cleanupLabel: cleanupLabel))
         if let message = outcome.userMessage {
             state = .failed(message)
             StatusOverlay.shared.flash(message, tone: .failure)
@@ -427,6 +467,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             askForMissingPermissions()
             if AppSettings.shared.transcriptionMode == .local {
                 LocalTranscriber.shared.prepare()
+            }
+            if AppSettings.shared.cleanupEngine == .apple {
+                AppleCleanup.shared.prewarm()
             }
             Log.app.info("Aside launched")
         }
