@@ -166,6 +166,7 @@ created from `Signing.xcconfig.example` on first build) controls signing:
    staples the ticket, and leaves `mac/build/Aside-<version>.zip` ready to publish.
 
 The app cannot go on the Mac App Store: the Accessibility API needs the App Sandbox off.
+Builds are Apple Silicon only (on-device Parakeet needs the Neural Engine).
 
 ## Developing
 
