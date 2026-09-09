@@ -29,6 +29,14 @@ struct AsideApp: App {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        #if DEBUG
+        // Simulator/test convenience: `xcrun simctl launch` can pass
+        // SIMCTL_CHILD_ASIDE_SEED_KEY_<provider>=<key> to put an API key in the keychain
+        // without typing it on screen. Debug builds only.
+        for (name, value) in ProcessInfo.processInfo.environment where name.hasPrefix("ASIDE_SEED_KEY_") {
+            APIKeyStore.set(value, for: String(name.dropFirst("ASIDE_SEED_KEY_".count)).lowercased())
+        }
+        #endif
         MainActor.assumeIsolated {
             SessionController.shared.prepareEngines()
             Log.app.info("Aside for iPhone launched")
