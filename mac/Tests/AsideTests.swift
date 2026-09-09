@@ -307,7 +307,85 @@ final class AsideTests: XCTestCase {
         XCTAssertTrue(text.lowercased().contains("test"), "got: \(text)")
     }
 
+    /// Streaming (fed while "recording") must produce the same words as the whole-clip path
+    /// on a clip long enough to cross two 11 s window seams. Same gate as above. The clip is
+    /// synthesized with `say`, so no fixture file is needed.
+    @MainActor
+    func testStreamingSessionMatchesWholeClip() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")
+        let pcm = try Self.synthesizedSpeech(
+            "Hello there, this is a longer test of dictation on this Mac. I am going to keep talking for a while so that the recording runs well past the first eleven second window. The quick brown fox jumps over the lazy dog, and then it goes back and does it again because nobody was watching the first time. We should also mention a few product names like HyperComply and a number like forty two, plus a question: does the streaming path drop or repeat words at the seams? Let us find out by comparing it against the whole clip transcription that the app used before this change.")
+        XCTAssertGreaterThan(WAV.duration(ofPCM16: pcm.count), 25, "clip should cross two window seams")
+
+        let transcriber = LocalTranscriber.shared
+        var started = Date()
+        let whole = try await transcriber.transcribe(pcm16: pcm)
+        let wholeMs = Int(Date().timeIntervalSince(started) * 1000)
+
+        let session = try XCTUnwrap(transcriber.beginSession(), "model is loaded, so a session must start")
+        // Feed like the microphone tap does: ~85 ms chunks.
+        let samples = LocalTranscriber.floatSamples(fromPCM16: pcm)
+        var offset = 0
+        while offset < samples.count {
+            let end = min(offset + 1365, samples.count)
+            session.feed(Array(samples[offset..<end]))
+            offset = end
+        }
+        // Give the background windows a moment, as they would have during a real recording.
+        try await Task.sleep(for: .seconds(1))
+        started = Date()
+        let streamed = try await session.finish()
+        let tailMs = Int(Date().timeIntervalSince(started) * 1000)
+
+        print("Whole clip (\(wholeMs) ms): \(whole)")
+        print("Streaming (tail \(tailMs) ms): \(streamed)")
+        let a = Self.words(whole), b = Self.words(streamed)
+        let distance = Self.editDistance(a, b)
+        XCTAssertLessThanOrEqual(Double(distance) / Double(max(a.count, 1)), 0.05,
+                                 "\(distance) word edits between whole-clip and streaming transcripts")
+    }
+
     // MARK: - Helpers
+
+    /// 16 kHz mono Int16 PCM of `text` spoken by the system voice.
+    private static func synthesizedSpeech(_ text: String) throws -> Data {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("aside-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let aiff = dir.appendingPathComponent("speech.aiff"), wav = dir.appendingPathComponent("speech.wav")
+        for (tool, args) in [
+            ("/usr/bin/say", ["-o", aiff.path, text]),
+            ("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", aiff.path, wav.path]),
+        ] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = args
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { throw XCTSkip("\(tool) failed with \(process.terminationStatus)") }
+        }
+        return WAV.pcm16(fromFile: try Data(contentsOf: wav))
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    private static func editDistance(_ a: [String], _ b: [String]) -> Int {
+        var previous = Array(0...b.count)
+        for i in 1...max(a.count, 1) where i <= a.count {
+            var current = [i] + Array(repeating: 0, count: b.count)
+            for j in 1...max(b.count, 1) where j <= b.count {
+                current[j] = a[i - 1] == b[j - 1]
+                    ? previous[j - 1]
+                    : 1 + min(previous[j - 1], previous[j], current[j - 1])
+            }
+            previous = current
+        }
+        return previous[b.count]
+    }
 
     private func le32(_ data: Data, _ offset: Int) -> UInt32 {
         var value: UInt32 = 0

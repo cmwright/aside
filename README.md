@@ -106,6 +106,12 @@ and dictionary replacements, unless Cleanup is **None** and no dictionary entry 
 replacement, in which case nothing leaves the Mac at all. The first load after launch
 takes a while (CoreML compiles the model); the overlay says so.
 
+Once the model is loaded, transcription runs while you are still holding the key:
+FluidAudio's sliding-window engine decodes the audio in 11 s windows with 2 s of context
+on each side (the same layout its whole-file path uses), so on key-up only the last few
+seconds are left to decode. The overlay says "Finishing up". If the model is still loading
+when you press the key, the whole recording is transcribed after key-up as before.
+
 ## The HTTP contract
 
 `POST {BACKEND_URL}/v1/audio/transcriptions`, `multipart/form-data`:

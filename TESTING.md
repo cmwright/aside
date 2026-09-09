@@ -131,8 +131,10 @@ Then, in any of them:
    The status line under it reads "Downloading / loading Parakeet v3…" then
    "Parakeet v3 ready". The first time this downloads about 470 MB; if the model is
    already cached (the test suite may have fetched it) it only compiles, about a minute.
-2. Hold Right Option and dictate. The pill says "Transcribing on this Mac", then
-   "Cleaning up" while the Worker runs the LLM pass on the text.
+2. Hold Right Option and dictate. The pill says "Finishing up" (Parakeet already decoded
+   most of the audio while you were talking), then "Cleaning up" while the Worker runs
+   the LLM pass on the text. If the model was still loading when you pressed the key it
+   says "Transcribing on this Mac" instead and decodes the whole recording now.
 3. Set Cleanup to **None** and remove any dictionary replacements to see it work with the
    Worker stopped: nothing leaves the Mac.
 4. Expect Parakeet to join brand names into one word ("hypercomply"); the dictionary

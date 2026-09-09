@@ -57,6 +57,9 @@ final class AppController: ObservableObject {
 
     private var flagsMonitors: [Any] = []
     private var capturedAppName: String?
+    /// Local mode: Parakeet keeps up with the audio while the key is held, so key-up only
+    /// has the tail left to decode. Nil when the model is not loaded yet or in cloud mode.
+    private var streamingSession: StreamingSession?
     private var rightOptionDown = false
     private var trigger = TriggerLogic()
     private var tapWindowTask: Task<Void, Never>?
@@ -187,8 +190,12 @@ final class AppController: ObservableObject {
     func beginRecording() {
         guard !recorder.isRecording, state != .processing else { return }
         capturedAppName = NSWorkspace.shared.frontmostApplication?.localizedName
+        let session = settings.transcriptionMode == .local ? LocalTranscriber.shared.beginSession() : nil
+        var listener: (@Sendable ([Float]) -> Void)?
+        if let session { listener = { session.feed($0) } }
         do {
-            try recorder.start()
+            try recorder.start(listener: listener)
+            streamingSession = session
             state = .recording
             // Without Accessibility we can still record, but insertion will fall all the way
             // back to the clipboard — say so instead of surprising the user later.
@@ -201,6 +208,7 @@ final class AppController: ObservableObject {
             startWatchdog()
             play(.start)
         } catch {
+            session?.cancel()
             fail(error.localizedDescription)
         }
     }
@@ -230,14 +238,18 @@ final class AppController: ObservableObject {
         tapWindowTask?.cancel()
         trigger.reset()
         cancelWatchdog()
+        let session = streamingSession
+        streamingSession = nil
         let audio: Data
         do {
             audio = try recorder.stop()
         } catch RecorderError.tooShort {
+            session?.cancel()
             state = .idle
             StatusOverlay.shared.hide()
             return
         } catch {
+            session?.cancel()
             fail(error.localizedDescription)
             return
         }
@@ -246,9 +258,10 @@ final class AppController: ObservableObject {
         state = .processing
 
         if settings.transcriptionMode == .local {
-            transcribeLocally(audio)
+            transcribeLocally(audio, session: session)
             return
         }
+        session?.cancel()
 
         StatusOverlay.shared.show("Transcribing", tone: .working)
 
@@ -278,11 +291,13 @@ final class AppController: ObservableObject {
     }
 
     /// On-device Parakeet, then the Worker's text-only cleanup route unless nothing
-    /// server-side would change the text.
-    private func transcribeLocally(_ audio: Data) {
+    /// server-side would change the text. With a streaming session most of the audio is
+    /// already decoded; without one (model still loading) the whole recording runs now.
+    private func transcribeLocally(_ audio: Data, session: StreamingSession?) {
         let transcriber = LocalTranscriber.shared
         StatusOverlay.shared.show(
-            transcriber.state == .ready ? "Transcribing on this Mac" : "Loading speech model (first time takes a while)",
+            session != nil ? "Finishing up"
+                : transcriber.state == .ready ? "Transcribing on this Mac" : "Loading speech model (first time takes a while)",
             tone: .working
         )
         let pcm = WAV.pcm16(fromFile: audio)
@@ -297,7 +312,18 @@ final class AppController: ObservableObject {
         Task { @MainActor in
             do {
                 let started = Date()
-                let raw = try await transcriber.transcribe(pcm16: pcm)
+                let raw: String
+                if let session {
+                    do {
+                        raw = try await session.finish()
+                    } catch {
+                        // The full recording is still in hand; decode it the slow way.
+                        Log.asr.error("Streaming session failed, falling back to whole-clip transcription: \(error.localizedDescription, privacy: .public)")
+                        raw = try await transcriber.transcribe(pcm16: pcm)
+                    }
+                } else {
+                    raw = try await transcriber.transcribe(pcm16: pcm)
+                }
                 let sttMs = Date().timeIntervalSince(started) * 1000
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty || !needsServer {
@@ -362,6 +388,8 @@ final class AppController: ObservableObject {
         cancelWatchdog()
         rightOptionDown = false
         recorder.cancel()
+        streamingSession?.cancel()
+        streamingSession = nil
         state = .failed(message)
         StatusOverlay.shared.flash(message, tone: .failure, after: 4)
         Log.app.error("\(message, privacy: .public)")
