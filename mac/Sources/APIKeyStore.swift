@@ -15,7 +15,11 @@ enum APIKeyStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            Log.app.error("Keychain read failed for \(providerID, privacy: .public): \(status, privacy: .public)")
+        }
+        guard status == errSecSuccess,
               let data = item as? Data, let text = String(data: data, encoding: .utf8)
         else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,10 +32,22 @@ enum APIKeyStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: providerID,
         ]
-        SecItemDelete(base as CFDictionary)
-        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else { return }
+        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
+            SecItemDelete(base as CFDictionary)
+            return
+        }
+        let data = Data(key.utf8)
+        // Update in place when the item exists, so an item this app created is simply
+        // rewritten; fall back to add. Items created by other tools cannot be edited
+        // by us, which the error log makes visible.
+        let update = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if update == errSecSuccess { return }
+        if update != errSecItemNotFound {
+            Log.app.error("Keychain update failed for \(providerID, privacy: .public): \(update, privacy: .public); replacing")
+            SecItemDelete(base as CFDictionary)
+        }
         var add = base
-        add[kSecValueData as String] = Data(key.utf8)
+        add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         let status = SecItemAdd(add as CFDictionary, nil)
         if status != errSecSuccess {

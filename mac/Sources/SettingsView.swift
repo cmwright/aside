@@ -182,6 +182,11 @@ struct SettingsView: View {
             result.wrappedValue = "Base URL or model is missing."
             return
         }
+        let preset = ProviderPreset.preset(id: stt ? settings.directSttProvider : settings.directChatProvider)
+        if preset.needsKey && (endpoint.apiKey ?? "").isEmpty {
+            result.wrappedValue = "No API key stored for \(preset.name). Paste it in the field above."
+            return
+        }
         result.wrappedValue = "Checking…"
         Task { @MainActor in
             do {

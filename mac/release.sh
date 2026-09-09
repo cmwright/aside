@@ -65,7 +65,12 @@ fi
 echo "== Verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
 for item in "$SPARKLE/Versions/B/Updater.app" "$SPARKLE/Versions/B/Autoupdate"; do
-  codesign -dvv "$item" 2>&1 | grep -q "Authority=Developer ID Application" || { echo "$item is not Developer ID signed" >&2; exit 1; }
+  # Capture first: with pipefail, `grep -q` closing the pipe early makes codesign fail.
+  details="$(codesign -dvv "$item" 2>&1 || true)"
+  case "$details" in
+    *"Authority=Developer ID Application"*) ;;
+    *) echo "$item is not Developer ID signed" >&2; exit 1 ;;
+  esac
 done
 codesign -d --entitlements - "$APP" | grep -q audio-input || { echo "audio-input entitlement missing" >&2; exit 1; }
 
