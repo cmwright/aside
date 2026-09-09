@@ -1,0 +1,21 @@
+{
+  // Cloudflare Worker config. Run locally with `npx wrangler dev` (http://localhost:8787).
+  // Secrets (GROQ_API_KEY, DEEPGRAM_API_KEY, BACKEND_TOKEN) never live here:
+  // locally they go in .dev.vars, in production use `npx wrangler secret put NAME`.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "voice-to-text",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "dev": {
+    "port": 8787
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // "groq" (one key covers speech-to-text and cleanup) or "deepgram".
+    "STT_PROVIDER": "groq",
+    // Groq chat model for the cleanup pass; "none" disables cleanup entirely.
+    "CLEANUP_MODEL": "openai/gpt-oss-120b"
+  }
+}
