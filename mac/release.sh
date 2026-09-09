@@ -42,8 +42,31 @@ APP="$DERIVED/Build/Products/Release/Aside.app"
 VERSION="$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)"
 ZIP="$DERIVED/Aside-$VERSION.zip"
 
+echo "== Re-signing Sparkle's nested components with Developer ID"
+# Xcode signs Sparkle.framework itself but leaves Updater.app, Autoupdate and the XPC
+# services with Sparkle's signature, which notarization rejects. Sign innermost first,
+# keeping Sparkle's own entitlements (the Downloader XPC is sandboxed on purpose).
+SIGN_ID="$(security find-identity -v -p codesigning | sed -n "s/.*\"\($IDENTITY[^\"]*\)\".*/\1/p" | head -n 1)"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE" ]; then
+  for item in \
+    "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+    "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE/Versions/B/Autoupdate" \
+    "$SPARKLE/Versions/B/Updater.app" \
+    "$SPARKLE"; do
+    [ -e "$item" ] || continue
+    codesign --force --options runtime --timestamp --preserve-metadata=entitlements --sign "$SIGN_ID" "$item"
+  done
+  # The app's own seal covers the framework, so it must be re-signed last.
+  codesign --force --options runtime --timestamp --entitlements Aside.entitlements --sign "$SIGN_ID" "$APP"
+fi
+
 echo "== Verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
+for item in "$SPARKLE/Versions/B/Updater.app" "$SPARKLE/Versions/B/Autoupdate"; do
+  codesign -dvv "$item" 2>&1 | grep -q "Authority=Developer ID Application" || { echo "$item is not Developer ID signed" >&2; exit 1; }
+done
 codesign -d --entitlements - "$APP" | grep -q audio-input || { echo "audio-input entitlement missing" >&2; exit 1; }
 
 echo "== Notarizing (this waits for Apple, usually a few minutes)"

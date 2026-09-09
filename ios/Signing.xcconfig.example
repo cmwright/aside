@@ -1,0 +1,15 @@
+// Copy this file to Signing.xcconfig (git-ignored) and fill it in.
+// build.sh copies it for you if Signing.xcconfig is missing, which is enough for the
+// CODE_SIGNING_ALLOWED=NO compile check but not for installing on a phone.
+
+// Your 10-character Team ID from https://developer.apple.com/account (Membership details),
+// or the one Xcode shows for your free Apple ID under Settings > Accounts > Manage
+// Certificates. This repo's owner: 44F896V7UJ
+//
+// Fill it in before running from Xcode onto a phone. Leaving it empty is fine for
+// ./build.sh, which does not sign.
+DEVELOPMENT_TEAM =
+
+// Automatic signing (set in project.yml) is not optional here: the App Group
+// group.com.codywright.aside has to exist in your developer account and be listed in both
+// provisioning profiles, and Xcode only registers it for you in Automatic mode.

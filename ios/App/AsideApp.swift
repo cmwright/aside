@@ -1,0 +1,55 @@
+import SwiftUI
+import UIKit
+
+@main
+struct AsideApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @StateObject private var controller = SessionController.shared
+    @StateObject private var recent = RecentDictations.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some Scene {
+        WindowGroup {
+            RootView()
+                .environmentObject(controller)
+                .environmentObject(controller.settings)
+                .environmentObject(controller.dictionary)
+                .environmentObject(controller.phone)
+                .environmentObject(recent)
+                // The keyboard opens aside://session/start.
+                .onOpenURL { controller.handle(url: $0) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // A session can expire while the app is suspended; catch up on the way back in.
+            if phase == .active { controller.refresh() }
+        }
+    }
+}
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        MainActor.assumeIsolated {
+            SessionController.shared.prepareEngines()
+            Log.app.info("Aside for iPhone launched")
+        }
+        return true
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject private var controller: SessionController
+
+    var body: some View {
+        TabView {
+            HomeView()
+                .tabItem { Label("Home", systemImage: "mic") }
+            PhoneDictionaryView()
+                .tabItem { Label("Dictionary", systemImage: "character.book.closed") }
+            PhoneSettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+            RecentView()
+                .tabItem { Label("Recent", systemImage: "clock") }
+        }
+    }
+}
