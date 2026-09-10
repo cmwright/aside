@@ -51,6 +51,59 @@ struct ToggleDictationIntent: SetValueIntent {
     }
 }
 
+/// For Shortcuts, the Action button and Siri: the same toggle, but the stopping run waits
+/// for the transcript and returns it, so a two-action shortcut — Dictate with Aside, then
+/// Copy to Clipboard — puts the text on the clipboard without any app coming forward.
+/// Shortcuts may write the clipboard from the background; Aside itself may not.
+@available(iOS 26.0, *)
+struct DictateIntent: AppIntent {
+    static let title: LocalizedStringResource = "Dictate with Aside"
+    static let description = IntentDescription(
+        "Starts recording. Run it again to stop: it then transcribes and returns the text. Follow it with Copy to Clipboard.")
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+
+    /// How long the stopping run waits for the app to transcribe and clean up.
+    static let resultTimeout: TimeInterval = 90
+
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        guard let store = AsideIPCStore.appGroup() else { throw AsideIPCError.noContainer }
+        let state = store.readControlState()
+        let recording = store.activeSession() != nil && (state?.recording ?? false)
+        guard recording, let id = state?.dictationID else {
+            try store.writeCommand(DictationCommand(action: .start, source: .control))
+            DarwinNotifier.post(AsideIPC.commandNotification)
+            if store.activeSession() == nil, systemContext.currentMode.canContinueInForeground {
+                try await continueInForeground(alwaysConfirm: false)
+            }
+            return .result(value: "")
+        }
+        try store.writeCommand(DictationCommand(action: .stop, source: .control))
+        DarwinNotifier.post(AsideIPC.commandNotification)
+        let deadline = Date().addingTimeInterval(DictateIntent.resultTimeout)
+        while Date() < deadline {
+            if let result = store.readResult(id: id), result.isFinal {
+                store.removeResult(id: id)
+                if result.status == .failed { throw DictateError.failed(result.error ?? "unknown error") }
+                return .result(value: result.text ?? "")
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        throw DictateError.timedOut
+    }
+
+    enum DictateError: LocalizedError {
+        case failed(String)
+        case timedOut
+
+        var errorDescription: String? {
+            switch self {
+            case .failed(let why): return "Aside could not transcribe: \(why)"
+            case .timedOut: return "Aside did not finish transcribing in time."
+            }
+        }
+    }
+}
+
 /// `control-trace.json` in the App Group: what the last tap of the control did, for
 /// diagnosing a control that appears to do nothing. Overwritten on every run.
 struct ControlTrace: Codable {

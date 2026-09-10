@@ -16,7 +16,7 @@ import Foundation
 ///     session.json              written by the app
 ///     control.json              written by the app: is a control-started dictation recording
 ///     commands/<uuid>.json      written by the keyboard or the control
-///     results/<uuid>.json       written by the app for the keyboard, keyed by the command id
+///     results/<uuid>.json       written by the app, keyed by the start command's id
 ///
 /// Foundation only: this file is compiled into the app, both extensions and the Mac
 /// unit-test target.
@@ -132,10 +132,14 @@ struct DictationCommand: Codable, Equatable, Sendable, Identifiable {
 /// `control.json`, written by the app so the Control Center toggle can show its state.
 struct ControlState: Codable, Equatable, Sendable {
     var recording: Bool
+    /// The dictation being recorded, which is also the key of its result file, so a
+    /// Shortcuts action that stops it can wait for the text.
+    var dictationID: UUID?
     var updatedAt: Date
 
-    init(recording: Bool, updatedAt: Date = Date()) {
+    init(recording: Bool, dictationID: UUID? = nil, updatedAt: Date = Date()) {
         self.recording = recording
+        self.dictationID = dictationID
         self.updatedAt = updatedAt
     }
 }

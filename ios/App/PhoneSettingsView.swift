@@ -104,7 +104,7 @@ struct PhoneSettingsView: View {
                 } header: {
                     Text("Control Center")
                 } footer: {
-                    Text("A dictation started from the Aside control in Control Center is copied to the clipboard for you to paste. iOS clears it at this deadline.")
+                    Text("A dictation started from the Aside control is copied to the clipboard for you to paste, when Aside comes to the front (tap the notification). iOS clears it at this deadline. For copying without opening Aside, run the Dictate with Aside shortcut action followed by Copy to Clipboard.")
                 }
             }
             .navigationTitle("Settings")

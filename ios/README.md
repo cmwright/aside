@@ -105,8 +105,16 @@ the status bar.
 12. **Add the control** (optional): open Control Center, tap **+** at the top left, **Add a
     Control**, and pick **Aside Dictation**. It can also go on the Lock Screen, and on an
     iPhone with an Action button, Settings → Action Button → Controls → Aside Dictation.
-    Tap it to record, tap again to stop; the text is copied and a notification shows it.
+    Tap it to record, tap again to stop. If Aside is in front, the text is copied at once;
+    otherwise iOS forbids a backgrounded app from writing the clipboard, so a notification
+    shows the text and tapping it (or opening Aside) copies it — then go back and paste.
     Settings → Control Center chooses when iOS clears the copied text.
+13. **No app switch at all** (optional): Shortcuts is allowed to write the clipboard from
+    the background, so a two-action shortcut does it. In the Shortcuts app: New Shortcut →
+    add **Dictate with Aside** → add **Copy to Clipboard** (its input is the text the first
+    action returns). Run it from a **Shortcut** control in Control Center, the Action
+    button, or Siri: the first run starts recording, the second stops, transcribes and
+    copies. Needs iOS 26 like the control.
 
 ## TestFlight and the App Store
 

@@ -68,6 +68,14 @@ final class SessionController: ObservableObject {
             case .app: return "app"
             }
         }
+
+        /// The start command's id, which keys the result file; nil for the in-app button.
+        var commandID: UUID? {
+            switch self {
+            case .keyboard(let id), .control(let id): return id
+            case .app: return nil
+            }
+        }
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -76,6 +84,9 @@ final class SessionController: ObservableObject {
     @Published private(set) var lastSummary: String?
     /// Shown at the top of Home after the keyboard sent us here to start a session.
     @Published var banner: String?
+    /// Text a Control Center dictation produced while another app was in front. iOS drops
+    /// clipboard writes from a backgrounded app, so it waits here until we are active.
+    @Published private(set) var pendingClipboardText: String?
 
     let settings: AppSettings
     let dictionary: DictionaryStore
@@ -334,6 +345,15 @@ final class SessionController: ObservableObject {
             endSession(expired: true)
         }
         adoptControlCommands()
+        deliverPendingClipboard()
+    }
+
+    /// Copies text held back from a background dictation now that the app is in front.
+    private func deliverPendingClipboard() {
+        guard let text = pendingClipboardText, UIApplication.shared.applicationState == .active else { return }
+        copyToClipboard(text)
+        pendingClipboardText = nil
+        banner = "Copied to the clipboard. Go back to your app and paste."
     }
 
     /// The Control Center toggle can be tapped with no session running. It writes its
@@ -471,7 +491,7 @@ final class SessionController: ObservableObject {
         }
         current = origin
         phase = .listening
-        if case .keyboard(let id) = origin {
+        if let id = origin.commandID {
             publish(DictationResult(id: id, status: .recording))
         }
         retimePolling()
@@ -490,7 +510,7 @@ final class SessionController: ObservableObject {
             return
         }
         phase = .processing
-        if case .keyboard(let id) = origin {
+        if let id = origin.commandID {
             publish(DictationResult(id: id, status: .processing))
         }
         syncControl()
@@ -516,7 +536,7 @@ final class SessionController: ObservableObject {
     private func discardCurrent() {
         cancelWatchdog()
         recorder.cancelDictation()
-        if case .keyboard(let id) = current { ipc.removeResult(id: id) }
+        if let id = current?.commandID { ipc.removeResult(id: id) }
         current = nil
     }
 
@@ -655,14 +675,20 @@ final class SessionController: ObservableObject {
         lastText = final
         phase = .idle
         let engineName = engine.rawValue
-        if case .keyboard(let id) = origin {
+        if let id = origin.commandID {
             publish(DictationResult(id: id, status: .done, text: final, rawText: raw,
                                     engine: engineName, cleanup: cleanupLabel,
                                     sttMs: sttMs, cleanupMs: cleanupMs))
         }
         if case .control = origin {
-            copyToClipboard(final)
-            notify(title: "Copied to clipboard", body: final)
+            if UIApplication.shared.applicationState == .active {
+                copyToClipboard(final)
+                notify(title: "Copied to clipboard", body: final)
+            } else {
+                // A backgrounded app cannot write the clipboard; it happens on the way in.
+                pendingClipboardText = final
+                notify(title: "Tap to copy", body: final)
+            }
         }
         syncControl()
         RecentDictations.shared.add(DictationRecord(
@@ -682,7 +708,7 @@ final class SessionController: ObservableObject {
             retimePolling()
         }
         phase = .failed(message)
-        if case .keyboard(let id) = origin {
+        if let id = origin.commandID {
             publish(DictationResult(id: id, status: .failed, error: message))
         }
         if case .control = origin {
@@ -727,10 +753,14 @@ final class SessionController: ObservableObject {
     /// happening: on only while a control-started dictation is being recorded.
     private func syncControl() {
         var recording = false
-        if case .control = current, phase == .listening { recording = true }
+        var id: UUID?
+        if case .control(let current) = current, phase == .listening {
+            recording = true
+            id = current
+        }
         guard recording != lastControlRecording || ipc.readControlState() == nil else { return }
         lastControlRecording = recording
-        try? ipc.writeControlState(ControlState(recording: recording))
+        try? ipc.writeControlState(ControlState(recording: recording, dictationID: id))
         if #available(iOS 18.0, *) {
             ControlCenter.shared.reloadAllControls()
         }
