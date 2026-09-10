@@ -108,6 +108,27 @@ the status bar.
     Tap it to record, tap again to stop; the text is copied and a notification shows it.
     Settings → Control Center chooses when iOS clears the copied text.
 
+## TestFlight and the App Store
+
+```sh
+# bump MARKETING_VERSION / CURRENT_PROJECT_VERSION in project.yml, then
+./release.sh              # Release archive, automatic signing, upload to App Store Connect
+./release.sh --no-upload  # archive only
+```
+
+One-time, in [App Store Connect](https://appstoreconnect.apple.com): create the app record
+(iOS, bundle ID `com.codywright.aside.ios`, any SKU). The upload fails with "Error
+Downloading App Information" until it exists. After processing the build appears under
+TestFlight; internal testers (team members) need no review, external testers and a public
+link need a one-time Beta App Review.
+
+What is already in place for review: the 1024 px icon (`scripts/make-appicon.swift`,
+the Mac glyph full-bleed), a privacy manifest in the app and both extensions declaring
+the `UserDefaults` and file-timestamp APIs they use, and the encryption exemption
+(`ITSAppUsesNonExemptEncryption`, HTTPS only). Still needed for the App Store itself: a
+privacy policy URL, screenshots, and review notes explaining that Full Access exists
+only so the keyboard can reach the app through the App Group.
+
 ## Settings
 
 - **Transcription** — *On this iPhone (Parakeet v3)*, the default, downloads a ~600 MB
