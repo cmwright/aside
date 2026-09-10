@@ -155,6 +155,7 @@ enum RecorderError: LocalizedError {
     case microphoneDenied
     case needsMicrophonePrompt
     case engineFailed(String)
+    case inputNotReady(String)
     case notRunning
     case tooShort
 
@@ -166,6 +167,8 @@ enum RecorderError: LocalizedError {
             return "Allow microphone access, then start the session again."
         case .engineFailed(let message):
             return "Could not start the microphone: \(message)"
+        case .inputNotReady(let input):
+            return "The microphone (\(input)) is not ready yet — try again in a moment."
         case .notRunning:
             return "No session is running."
         case .tooShort:
@@ -194,6 +197,7 @@ final class SessionRecorder {
     /// tap whose format disagrees with it is an uncatchable Objective-C exception.
     private var interrupted = false
     private var resumeTask: Task<Void, Never>?
+    private var rebuildTask: Task<Void, Never>?
 
     var capturedSeconds: Double { sink.capturedSeconds }
 
@@ -236,21 +240,31 @@ final class SessionRecorder {
         do {
             // .playAndRecord (not .record) so a session can survive alongside music and so
             // the app keeps the background audio assertion. .mixWithOthers means starting a
-            // session never stops what the user is listening to.
-            // .allowBluetooth is the iOS 17 spelling of what iOS 26 renamed
-            // .allowBluetoothHFP — same option, and the old name is what a 17.0
-            // deployment target can name. Hence one deprecation warning per build.
+            // session never stops what the user is listening to. .allowBluetoothHFP lets a
+            // Bluetooth headset's microphone be the input (AirPods, a car kit); the phone
+            // switches such a headset from its music profile to the hands-free one, which
+            // takes a moment, see `installTapAndStart`.
             try audioSession.setCategory(.playAndRecord, mode: .default,
-                                         options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker])
+                                         options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker])
             try audioSession.setActive(true, options: [])
         } catch {
+            AudioTrace.write("session activation failed: \(error.localizedDescription)")
             throw RecorderError.engineFailed(error.localizedDescription)
         }
 
         installObservers()
-        try installTapAndStart()
         isRunning = true
-        Log.audio.notice("Session audio engine started")
+        do {
+            try installTapAndStart()
+            Log.audio.notice("Session audio engine started")
+        } catch {
+            // Typically a Bluetooth headset still switching profiles: the route exists but
+            // the input has no format yet. The session stays up and the engine is retried
+            // in the background; a dictation attempted before it is ready is refused with
+            // a clear message rather than recording silence.
+            Log.audio.error("Engine did not start at once: \(error.localizedDescription, privacy: .public)")
+            restartEngine(reason: "start", firstDelay: .milliseconds(500))
+        }
     }
 
     func stopSession() {
@@ -260,6 +274,8 @@ final class SessionRecorder {
         interrupted = false
         resumeTask?.cancel()
         resumeTask = nil
+        rebuildTask?.cancel()
+        rebuildTask = nil
         sink.discard()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -270,6 +286,7 @@ final class SessionRecorder {
 
     func beginDictation() throws {
         guard isRunning else { throw RecorderError.notRunning }
+        guard engine.isRunning else { throw RecorderError.inputNotReady(AudioTrace.currentInput) }
         sink.beginCapture()
         isDictating = true
         Log.audio.info("Dictation started")
@@ -297,8 +314,10 @@ final class SessionRecorder {
     private func installTapAndStart() throws {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        let route = AudioTrace.routeDescription
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw RecorderError.engineFailed("no input device")
+            AudioTrace.write("input not ready (\(route))")
+            throw RecorderError.engineFailed("the input (\(AudioTrace.currentInput)) is not ready yet")
         }
         input.removeTap(onBus: 0)
         let sink = self.sink
@@ -313,8 +332,10 @@ final class SessionRecorder {
         engine.prepare()
         do {
             try engine.start()
+            AudioTrace.write("engine running: \(route), \(Int(format.sampleRate)) Hz × \(format.channelCount)")
         } catch {
             input.removeTap(onBus: 0)
+            AudioTrace.write("engine start failed (\(route)): \(error.localizedDescription)")
             throw RecorderError.engineFailed(error.localizedDescription)
         }
     }
@@ -327,8 +348,10 @@ final class SessionRecorder {
         })
         // Plugging in headphones or a car kit changes the input format; so does a phone
         // call taking the microphone away and giving it back.
-        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.rebuild(reason: "route change") }
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let reason = raw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            MainActor.assumeIsolated { self?.rebuild(reason: "route change (\(AudioTrace.name(of: reason)))") }
         })
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             // Pull the one value out here: the Notification itself is not Sendable.
@@ -342,19 +365,45 @@ final class SessionRecorder {
         observers.removeAll()
     }
 
+    /// A route change and an engine configuration change usually arrive together, and a
+    /// Bluetooth headset switching profiles produces several in a row while the input has
+    /// no usable format. Rebuilds are coalesced and retried rather than done at once.
     private func rebuild(reason: String) {
         guard isRunning else { return }
         guard !interrupted else {
             Log.audio.info("Ignoring a \(reason, privacy: .public) while interrupted")
             return
         }
-        Log.audio.info("Rebuilding the input tap after a \(reason, privacy: .public)")
-        sink.invalidateConverter()
-        engine.stop()
-        do {
-            try installTapAndStart()
-        } catch {
-            Log.audio.error("Rebuild failed: \(error.localizedDescription, privacy: .public)")
+        Log.audio.info("Input changed: \(reason, privacy: .public)")
+        AudioTrace.write(reason)
+        restartEngine(reason: reason, firstDelay: .milliseconds(300))
+    }
+
+    /// Stops the engine and starts it again on the current input, retrying for a few
+    /// seconds: after a route change the hardware format settles a moment later, and a
+    /// failed start is an error, not a crash. A dictation in flight cannot survive the
+    /// gap, so it is dropped.
+    private func restartEngine(reason: String, firstDelay: Duration) {
+        rebuildTask?.cancel()
+        rebuildTask = Task { @MainActor [weak self] in
+            for attempt in 1...6 {
+                try? await Task.sleep(for: attempt == 1 ? firstDelay : .milliseconds(700))
+                guard let self, !Task.isCancelled, self.isRunning, !self.interrupted else { return }
+                if self.isDictating {
+                    self.isDictating = false
+                    self.sink.discard()
+                }
+                self.sink.invalidateConverter()
+                self.engine.stop()
+                do {
+                    try self.installTapAndStart()
+                    Log.audio.notice("Engine restarted after \(reason, privacy: .public) (attempt \(attempt, privacy: .public))")
+                    return
+                } catch {
+                    Log.audio.error("Restart attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            AudioTrace.write("gave up restarting the engine after \(reason)")
         }
     }
 
@@ -396,6 +445,53 @@ final class SessionRecorder {
                     Log.audio.error("Resume attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
+        }
+    }
+}
+
+/// The last few things the microphone did — which input the session runs on, route
+/// changes, engine restarts and failures — shown under Settings so a report like "with
+/// AirPods in I can't record" comes with the facts. Kept in the app's own defaults,
+/// capped at twenty lines.
+enum AudioTrace {
+    private static let key = "audioTrace"
+
+    static func write(_ line: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var lines = UserDefaults.standard.stringArray(forKey: key) ?? []
+        lines.append("\(stamp) \(line)")
+        UserDefaults.standard.set(Array(lines.suffix(20)), forKey: key)
+        Log.audio.info("\(line, privacy: .public)")
+    }
+
+    static var lines: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    static func clear() { UserDefaults.standard.removeObject(forKey: key) }
+
+    /// "AirPods Pro (BluetoothHFP) → AirPods Pro (BluetoothHFP)".
+    static var routeDescription: String {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        func list(_ ports: [AVAudioSessionPortDescription]) -> String {
+            ports.isEmpty ? "none" : ports.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
+        }
+        return "\(list(route.inputs)) → \(list(route.outputs))"
+    }
+
+    static var currentInput: String {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "no input"
+    }
+
+    static func name(of reason: AVAudioSession.RouteChangeReason?) -> String {
+        switch reason {
+        case .newDeviceAvailable: return "new device"
+        case .oldDeviceUnavailable: return "device gone"
+        case .categoryChange: return "category change"
+        case .override: return "override"
+        case .wakeFromSleep: return "wake"
+        case .noSuitableRouteForCategory: return "no suitable route"
+        case .routeConfigurationChange: return "route configuration change"
+        case .unknown, .none: return "unknown"
+        @unknown default: return "other"
         }
     }
 }

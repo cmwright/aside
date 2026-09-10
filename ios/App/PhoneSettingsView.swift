@@ -93,6 +93,23 @@ struct PhoneSettingsView: View {
                 }
 
                 Section {
+                    let lines = AudioTrace.lines
+                    if lines.isEmpty {
+                        Text("Nothing recorded yet. Start a session or hold to talk.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(lines.reversed(), id: \.self) { line in
+                            Text(line).font(.footnote.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Button("Clear") { AudioTrace.clear() }
+                    }
+                } header: {
+                    Text("Microphone")
+                } footer: {
+                    Text("Which input the session runs on and what happened when it changed, for example when AirPods connected. Bluetooth headsets are used through their hands-free profile, so their microphone works, and the phone needs a moment to switch them over.")
+                }
+
+                Section {
                     Picker("Clear copied text", selection: $phone.clipboardExpiry) {
                         ForEach(ClipboardExpiry.allCases) { expiry in
                             Text(expiry.title).tag(expiry)
