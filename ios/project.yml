@@ -104,6 +104,9 @@ targets:
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Portrait-only is fine for an iPhone app, but App Store validation (error 90474)
+        # insists on all four orientations unless the app declares it never multitasks.
+        UIRequiresFullScreen: true
         # Keeping the audio engine running is what lets a session survive the app going to
         # the background, which is the whole point of "Start Session".
         UIBackgroundModes: [audio]

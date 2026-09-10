@@ -11,7 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-XCODEGEN="${XCODEGEN:-$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)}"
+# Xcode's packaging step shells out to rsync with flags only Apple's openrsync accepts;
+# a Homebrew rsync earlier in PATH makes the export fail with "Copy failed".
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+XCODEGEN="${XCODEGEN:-/opt/homebrew/bin/xcodegen}"
 "$XCODEGEN" generate >/dev/null
 
 TEAM_ID="$(sed -n 's/^DEVELOPMENT_TEAM *= *//p' Signing.xcconfig | tr -d '[:space:]')"
