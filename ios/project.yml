@@ -59,6 +59,7 @@ targets:
       - path: ../mac/Sources/Dictionary.swift
       - path: ../mac/Sources/DictionaryReplacer.swift
       - path: ../mac/Sources/CleanupPrompt.swift
+      - path: ../mac/Sources/History.swift
       - path: ../mac/Sources/AppleCleanup.swift
       - path: ../mac/Sources/LocalTranscriber.swift
       # Direct providers: an OpenAI-compatible endpoint called straight from the phone,

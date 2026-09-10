@@ -534,3 +534,74 @@ final class AsideTests: XCTestCase {
         _ = AppController.secureInputHolderName()
     }
 }
+
+/// The dictation history store shared by the Mac and iPhone apps: memory only by default,
+/// a JSON file pruned by age once a retention is chosen.
+final class DictationHistoryTests: XCTestCase {
+    private var root: URL!
+    private var suiteName: String!
+
+    override func setUpWithError() throws {
+        root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("aside-history-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        suiteName = "aside-history-tests-\(UUID().uuidString)"
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+    }
+
+    @MainActor
+    private func makeSettings() -> AppSettings {
+        AppSettings(defaults: UserDefaults(suiteName: suiteName)!)
+    }
+
+    private func record(daysAgo: Double, text: String) -> DictationRecord {
+        DictationRecord(date: Date().addingTimeInterval(-daysAgo * 86_400), engine: .local,
+                        rawText: text, finalText: text, sttMs: 1, cleanupMs: 1, cleanupLabel: "none")
+    }
+
+    @MainActor
+    func testSessionOnlyWritesNothing() {
+        let settings = makeSettings()
+        let file = root.appendingPathComponent("history.json")
+        let history = DictationHistory(fileURL: file, settings: settings)
+        history.add(record(daysAgo: 0, text: "hello"))
+        XCTAssertEqual(history.records.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @MainActor
+    func testRetentionStoresAndPrunesByAge() throws {
+        let settings = makeSettings()
+        settings.historyRetention = .ninetyDays
+        let file = root.appendingPathComponent("history.json")
+        let history = DictationHistory(fileURL: file, settings: settings)
+        history.add(record(daysAgo: 100, text: "too old"))
+        history.add(record(daysAgo: 10, text: "recent"))
+        XCTAssertEqual(history.records.map(\.finalText), ["recent"], "the 100-day-old record is pruned on add")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
+        let reloaded = DictationHistory(fileURL: file, settings: settings)
+        XCTAssertEqual(reloaded.records.map(\.finalText), ["recent"], "a new instance reads the file back")
+    }
+
+    @MainActor
+    func testSwitchingToSessionOnlyDeletesTheFile() async {
+        let settings = makeSettings()
+        settings.historyRetention = .forever
+        let file = root.appendingPathComponent("history.json")
+        let history = DictationHistory(fileURL: file, settings: settings)
+        history.add(record(daysAgo: 400, text: "kept forever"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
+        settings.historyRetention = .sessionOnly
+        // The store reacts on the main actor a moment later.
+        for _ in 0..<20 where FileManager.default.fileExists(atPath: file.path) {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(history.records.count, 1, "memory is kept; only the file goes")
+    }
+}

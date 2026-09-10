@@ -5,7 +5,6 @@ import UIKit
 struct AsideApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var controller = SessionController.shared
-    @StateObject private var recent = RecentDictations.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -15,7 +14,7 @@ struct AsideApp: App {
                 .environmentObject(controller.settings)
                 .environmentObject(controller.dictionary)
                 .environmentObject(controller.phone)
-                .environmentObject(recent)
+                .environmentObject(controller.history)
                 // The keyboard opens aside://session/start; the control aside://control/start.
                 .onOpenURL { controller.handle(url: $0) }
                 // `onChange(of: scenePhase)` does not fire for the initial value, so a cold

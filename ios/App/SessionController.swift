@@ -4,30 +4,6 @@ import UniformTypeIdentifiers
 import UserNotifications
 import WidgetKit
 
-/// One finished dictation, kept in memory so the raw speech-model output can be compared
-/// with the text after cleanup. Nothing is written to disk: transcripts stay in the
-/// process, and the App Group result file is deleted as soon as the keyboard has read it.
-struct DictationRecord: Identifiable, Sendable {
-    let id = UUID()
-    let date: Date
-    let engine: TranscriptionMode
-    let source: String
-    let rawText: String
-    let finalText: String
-    let sttMs: Int
-    let cleanupMs: Int
-    let cleanupLabel: String
-
-    var engineLabel: String {
-        switch engine {
-        case .local: return "Parakeet v3 (on this iPhone)"
-        case .direct: return "provider, direct"
-        case .cloud: return "Worker (not available on iPhone)"
-        }
-    }
-    var changed: Bool { rawText.trimmingCharacters(in: .whitespacesAndNewlines) != finalText }
-}
-
 /// The session engine: it owns the microphone, watches the App Group for commands from the
 /// keyboard extension, runs the same pipeline the Mac app runs, and writes results back.
 ///
@@ -101,6 +77,8 @@ final class SessionController: ObservableObject {
     let settings: AppSettings
     let dictionary: DictionaryStore
     let phone: PhoneSettings
+    /// Shared with the Mac app: memory only, or a JSON file pruned by the retention setting.
+    let history: DictationHistory
 
     private let recorder = SessionRecorder()
     private let direct = DirectClient()
@@ -127,6 +105,7 @@ final class SessionController: ObservableObject {
         self.settings = settings ?? AppSettings(defaults: AppGroupStorage.defaults)
         self.dictionary = dictionary ?? DictionaryStore(fileURL: AppGroupStorage.dictionaryURL)
         self.phone = phone ?? PhoneSettings.shared
+        self.history = DictationHistory(fileURL: DictationHistory.defaultFileURL, settings: self.settings)
         // A session written by an earlier launch is not ours; the audio engine died with it.
         if ipc.readSession()?.active == true { try? ipc.endSession() }
         self.session = ipc.readSession()
@@ -716,7 +695,7 @@ final class SessionController: ObservableObject {
             }
         }
         syncControl()
-        RecentDictations.shared.add(DictationRecord(
+        history.add(DictationRecord(
             date: Date(), engine: engine, source: origin.name,
             rawText: raw, finalText: final, sttMs: sttMs, cleanupMs: cleanupMs, cleanupLabel: cleanupLabel))
         lastSummary = "Last: \(engineDescription(engine)), speech \(sttMs) ms"
@@ -823,21 +802,4 @@ final class SessionController: ObservableObject {
         content.body = body.count > 300 ? String(body.prefix(300)) + "…" : body
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
-}
-
-/// Ring buffer of recent dictations. Memory only, like the Mac app's history: a phone
-/// keyboard should not leave transcripts behind on disk.
-@MainActor
-final class RecentDictations: ObservableObject {
-    static let shared = RecentDictations()
-    static let capacity = 50
-
-    @Published private(set) var records: [DictationRecord] = []
-
-    func add(_ record: DictationRecord) {
-        records.insert(record, at: 0)
-        if records.count > RecentDictations.capacity { records.removeLast() }
-    }
-
-    func clear() { records.removeAll() }
 }

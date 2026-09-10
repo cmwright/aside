@@ -74,10 +74,15 @@ speech model joining the words ("acmecloud").
 
 ## Recent Dictations
 
-**Recent Dictations…** in the menu shows the last 50: what the speech model heard, what
-was pasted after cleanup, which engines ran, and how long each stage took. It lives in
-memory only. A toggle appends each dictation as a JSON line to
-`~/Library/Logs/Aside/dictations.jsonl` if you want to `tail -f` while comparing engines.
+**Recent Dictations…** in the menu shows what the speech model heard, what was pasted
+after cleanup, which engines ran, and how long each stage took, with a filter box and
+Copy on every entry. By default the last 50 live in memory and vanish when Aside quits.
+The **Keep history** picker in that window stores them on the Mac instead, for 7, 30 or
+90 days, a year, or forever, pruned by age; the file is
+`~/Library/Application Support/Aside/history.json`, and choosing "This launch only"
+again deletes it. The iPhone app has the same picker in its Recent tab. Separately, a
+toggle appends each dictation as a JSON line to `~/Library/Logs/Aside/dictations.jsonl`
+if you want to `tail -f` while comparing engines.
 
 ## Privacy
 

@@ -183,7 +183,8 @@ keyboard has read it.
 ## Known limits
 
 - No streaming preview; the text arrives when you let go.
-- Recent dictations are in memory only, so they are gone after the app is killed.
+- Recent dictations are in memory only unless the Recent tab's **Keep history** picker
+  says otherwise; then they are stored in the app's own container for the chosen span.
 - The keyboard has no typing keys beyond space, backspace and return — switch keyboards with
   the globe for anything else.
 - iOS gives no way to jump back to the app you came from; use the status-bar breadcrumb.

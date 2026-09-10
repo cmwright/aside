@@ -34,6 +34,7 @@ final class AppSettings: ObservableObject {
         static let transcriptionMode = "transcriptionMode"
         static let logDictationsToFile = "logDictationsToFile"
         static let cleanupEngine = "cleanupEngine"
+        static let historyRetention = "historyRetention"
         static let directChatProvider = "directChatProvider"
         static let directChatModel = "directChatModel"
         static let directChatBaseURL = "directChatBaseURL"
@@ -88,6 +89,8 @@ final class AppSettings: ObservableObject {
     @Published var logDictationsToFile: Bool { didSet { defaults.set(logDictationsToFile, forKey: Key.logDictationsToFile) } }
     /// Who runs the cleanup pass: the Worker's model, or Apple's on-device model.
     @Published var cleanupEngine: CleanupEngine { didSet { defaults.set(cleanupEngine.rawValue, forKey: Key.cleanupEngine) } }
+    /// How long Recent Dictations are kept on disk. Off by default: transcripts stay in memory.
+    @Published var historyRetention: HistoryRetention { didSet { defaults.set(historyRetention.rawValue, forKey: Key.historyRetention) } }
     /// Direct mode: which OpenAI-compatible service runs cleanup, and which one runs speech.
     /// Empty model / base URL strings mean "use the preset's default".
     @Published var directChatProvider: String { didSet { defaults.set(directChatProvider, forKey: Key.directChatProvider) } }
@@ -123,6 +126,7 @@ final class AppSettings: ObservableObject {
         logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
         cleanupEngine = AppSettings.supported(
             CleanupEngine(rawValue: defaults.string(forKey: Key.cleanupEngine) ?? "") ?? AppSettings.defaultCleanupEngine)
+        historyRetention = HistoryRetention(rawValue: defaults.string(forKey: Key.historyRetention) ?? "") ?? .sessionOnly
         directChatProvider = defaults.string(forKey: Key.directChatProvider) ?? ProviderPreset.cerebras.id
         directChatModel = defaults.string(forKey: Key.directChatModel) ?? ""
         directChatBaseURL = defaults.string(forKey: Key.directChatBaseURL) ?? ""
@@ -197,7 +201,7 @@ final class AppSettings: ObservableObject {
     }
 }
 
-enum TranscriptionMode: String, CaseIterable, Identifiable, Sendable {
+enum TranscriptionMode: String, CaseIterable, Identifiable, Sendable, Codable {
     case local
     case direct
     case cloud

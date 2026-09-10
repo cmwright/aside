@@ -148,7 +148,8 @@ Then, in any of them:
 
 Menu bar icon → **Recent Dictations…** (Cmd-H while the menu is open). Each entry shows
 the engine, timings, the raw text from Parakeet or the cloud provider, and the final text
-after the LLM pass and dictionary replacements. Entries live in memory only. Switch on
+after the LLM pass and dictionary replacements. Entries live in memory only unless the
+**Keep history** picker in that window stores them for a chosen span. Switch on
 "Also append every dictation to a log file" to get JSON lines at
 `~/Library/Logs/Aside/dictations.jsonl`, then `tail -f` it while dictating.
 
