@@ -85,8 +85,18 @@ final class SessionController: ObservableObject {
     /// Shown at the top of Home after the keyboard sent us here to start a session.
     @Published var banner: String?
     /// Text a Control Center dictation produced while another app was in front. iOS drops
-    /// clipboard writes from a backgrounded app, so it waits here until we are active.
-    @Published private(set) var pendingClipboardText: String?
+    /// clipboard writes from a backgrounded app, so it waits until we are active. Kept in
+    /// a file as well, so it survives iOS killing the app before the user taps.
+    @Published private(set) var pendingClipboardText: String? {
+        didSet {
+            if let pendingClipboardText {
+                try? pendingClipboardText.write(to: SessionController.pendingClipboardURL, atomically: true, encoding: .utf8)
+            } else {
+                try? FileManager.default.removeItem(at: SessionController.pendingClipboardURL)
+            }
+        }
+    }
+    private static var pendingClipboardURL: URL { AppGroupStorage.container.appendingPathComponent("pending-clipboard.txt") }
 
     let settings: AppSettings
     let dictionary: DictionaryStore
@@ -120,7 +130,17 @@ final class SessionController: ObservableObject {
         // A session written by an earlier launch is not ours; the audio engine died with it.
         if ipc.readSession()?.active == true { try? ipc.endSession() }
         self.session = ipc.readSession()
+        self.pendingClipboardText = try? String(contentsOf: SessionController.pendingClipboardURL, encoding: .utf8)
+        // The one reliable "we are in front now" signal: SwiftUI's scene phase is still
+        // inactive when views first appear, and its change handler skips the initial value.
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { SessionController.shared.refresh() }
+        }
     }
+
+    private var activeObserver: NSObjectProtocol?
 
     var isSessionActive: Bool { AsideIPC.isActive(session, at: Date()) }
 
@@ -350,7 +370,12 @@ final class SessionController: ObservableObject {
 
     /// Copies text held back from a background dictation now that the app is in front.
     private func deliverPendingClipboard() {
-        guard let text = pendingClipboardText, UIApplication.shared.applicationState == .active else { return }
+        guard let text = pendingClipboardText else { return }
+        let state = UIApplication.shared.applicationState
+        guard state == .active else {
+            Log.app.info("Holding clipboard text: app state \(state.rawValue, privacy: .public)")
+            return
+        }
         copyToClipboard(text)
         pendingClipboardText = nil
         banner = "Copied to the clipboard. Go back to your app and paste."

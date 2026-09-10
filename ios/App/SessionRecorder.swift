@@ -189,6 +189,11 @@ final class SessionRecorder {
 
     private(set) var isRunning = false
     private(set) var isDictating = false
+    /// Between an interruption beginning and ending (system dictation, Siri, a call). No
+    /// tap is rebuilt while it is set: the hardware format is in flux, and installing a
+    /// tap whose format disagrees with it is an uncatchable Objective-C exception.
+    private var interrupted = false
+    private var resumeTask: Task<Void, Never>?
 
     var capturedSeconds: Double { sink.capturedSeconds }
 
@@ -252,6 +257,9 @@ final class SessionRecorder {
         guard isRunning else { return }
         isRunning = false
         isDictating = false
+        interrupted = false
+        resumeTask?.cancel()
+        resumeTask = nil
         sink.discard()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -295,8 +303,11 @@ final class SessionRecorder {
         input.removeTap(onBus: 0)
         let sink = self.sink
         // The tap runs on AVFoundation's realtime thread; @Sendable keeps it out of the
-        // main actor, which Swift 6 would otherwise assert on.
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
+        // main actor, which Swift 6 would otherwise assert on. `format: nil` makes the
+        // tap take the node's format at install time rather than the one queried a moment
+        // ago; a mismatch there raises an exception instead of an error. The sink builds
+        // its converter from whatever format the buffers actually carry.
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { @Sendable buffer, _ in
             sink.append(buffer)
         }
         engine.prepare()
@@ -333,6 +344,10 @@ final class SessionRecorder {
 
     private func rebuild(reason: String) {
         guard isRunning else { return }
+        guard !interrupted else {
+            Log.audio.info("Ignoring a \(reason, privacy: .public) while interrupted")
+            return
+        }
         Log.audio.info("Rebuilding the input tap after a \(reason, privacy: .public)")
         sink.invalidateConverter()
         engine.stop()
@@ -348,14 +363,39 @@ final class SessionRecorder {
         switch type {
         case .began:
             Log.audio.notice("Audio interrupted; dropping any in-flight dictation")
+            interrupted = true
+            resumeTask?.cancel()
             sink.discard()
             isDictating = false
             engine.stop()
         case .ended:
-            try? AVAudioSession.sharedInstance().setActive(true, options: [])
-            rebuild(reason: "interruption ending")
+            interrupted = false
+            resumeAfterInterruption()
         @unknown default:
             break
+        }
+    }
+
+    /// The other party (system dictation, Siri, a call) has let go of the microphone, but
+    /// the route and hardware format settle a moment later. Wait, then reactivate and
+    /// rebuild, retrying a few times: a failed start here is an error, not a crash.
+    private func resumeAfterInterruption() {
+        resumeTask?.cancel()
+        resumeTask = Task { @MainActor [weak self] in
+            for attempt in 1...4 {
+                try? await Task.sleep(for: .milliseconds(attempt == 1 ? 400 : 1000))
+                guard let self, !Task.isCancelled, self.isRunning, !self.interrupted else { return }
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true, options: [])
+                    self.sink.invalidateConverter()
+                    self.engine.stop()
+                    try self.installTapAndStart()
+                    Log.audio.notice("Resumed after interruption (attempt \(attempt, privacy: .public))")
+                    return
+                } catch {
+                    Log.audio.error("Resume attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         }
     }
 }
