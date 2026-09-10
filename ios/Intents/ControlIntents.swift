@@ -62,11 +62,26 @@ struct ControlTrace: Codable {
     var mode = ""
     var outcome = "perform did not finish"
 
+    static var url: URL? { AsideIPC.containerURL()?.appendingPathComponent("control-trace.json") }
+
     func write() {
-        guard let container = AsideIPC.containerURL() else { return }
+        guard let url = ControlTrace.url else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(self).write(to: container.appendingPathComponent("control-trace.json"), options: .atomic)
+        try? encoder.encode(self).write(to: url, options: .atomic)
+    }
+
+    static func read() -> ControlTrace? {
+        guard let url, let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(ControlTrace.self, from: data)
+    }
+
+    /// One line for the Settings screen.
+    var summary: String {
+        let time = DateFormatter.localizedString(from: at, dateStyle: .none, timeStyle: .medium)
+        return "Last tap \(time): \(value ? "start" : "stop") in \(process); session \(sessionActive ? "active" : "none"); mode \(mode.isEmpty ? "?" : mode); can continue in foreground: \(canContinueInForeground ? "yes" : "no"); \(outcome)."
     }
 }

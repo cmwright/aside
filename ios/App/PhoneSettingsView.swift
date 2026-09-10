@@ -98,6 +98,9 @@ struct PhoneSettingsView: View {
                             Text(expiry.title).tag(expiry)
                         }
                     }
+                    if let trace = ControlTrace.read() {
+                        Text(trace.summary).font(.footnote).foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("Control Center")
                 } footer: {
