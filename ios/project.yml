@@ -47,6 +47,9 @@ targets:
       - path: App
         excludes:
           - Info.plist
+          - PrivacyInfo.xcprivacy
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Shared
       # The Control Center intent, compiled into the app as well as the control extension.
       - path: Intents
@@ -82,6 +85,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.ios
         PRODUCT_NAME: Aside
         INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
     info:
       path: App/Info.plist
@@ -91,6 +95,7 @@ targets:
         CFBundlePackageType: APPL
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         # The keyboard opens aside://session/start to get a session going.
         CFBundleURLTypes:
           - CFBundleURLName: com.codywright.aside.ios
@@ -111,6 +116,9 @@ targets:
       - path: Keyboard
         excludes:
           - Info.plist
+          - PrivacyInfo.xcprivacy
+      - path: Keyboard/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Shared
       # The gesture state machine, shared with the Mac trigger. Foundation only.
       - path: ../mac/Sources/Trigger.swift
@@ -133,6 +141,7 @@ targets:
         CFBundlePackageType: XPC!
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
@@ -155,6 +164,9 @@ targets:
       - path: Control
         excludes:
           - Info.plist
+          - PrivacyInfo.xcprivacy
+      - path: Control/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Shared
       - path: Intents
     entitlements:
@@ -176,6 +188,7 @@ targets:
         CFBundlePackageType: XPC!
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
