@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -65,11 +66,27 @@ final class DictionaryStore: ObservableObject {
     @Published var lastError: String?
 
     let fileURL: URL
+    private var autosave: AnyCancellable?
+
+    /// How long after the last edit the file is written.
+    nonisolated static let autosaveDelay: TimeInterval = 0.5
 
     init(fileURL: URL? = nil) {
         self.fileURL = fileURL ?? DictionaryStore.defaultFileURL()
         DictionaryStore.migrateFromVoiceToTextIfNeeded(to: self.fileURL)
         load()
+        // The table edits `entries` in place as you type. Saving only on Enter or when the
+        // view went away meant an update (Sparkle quits and relaunches) or a plain quit
+        // could drop the last edit, so every change now reaches the disk shortly after.
+        // Not armed when the file could not be read, so a bad file is never overwritten
+        // with an empty list.
+        guard lastError == nil else { return }
+        autosave = $entries
+            .dropFirst()
+            .debounce(for: .seconds(DictionaryStore.autosaveDelay), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.save() }
+            }
     }
 
     /// The app was called VoiceToText before 2026-09-08. Copy that dictionary over once.

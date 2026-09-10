@@ -790,6 +790,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The dictionary autosave is debounced; an edit made in the last half second before
+    /// quitting (or before Sparkle relaunches for an update) still needs to reach the disk.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { DictionaryStore.shared.save() }
+    }
+
     /// First run must not be silent: without Microphone there is no audio, and without
     /// Accessibility the Right Option monitor never fires, so "hold the key and speak"
     /// would do nothing at all with no visible explanation.
