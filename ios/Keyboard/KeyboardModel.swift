@@ -298,10 +298,6 @@ final class KeyboardModel: ObservableObject {
         proxy.insertText(AsideIPC.needsLeadingSpace(contextBefore: context, text: text) ? " " + text : text)
     }
 
-    func openApp() {
-        controller?.openContainerApp(KeyboardModel.startSessionURL)
-    }
-
     func nextKeyboard() {
         controller?.advanceToNextKeyboard()
     }

@@ -62,19 +62,4 @@ final class KeyboardViewController: UIInputViewController {
     func advanceToNextKeyboard() {
         advanceToNextInputMode()
     }
-
-    /// An app extension has no `UIApplication`, so the URL is handed up the responder chain
-    /// to the one that is really there. `openURL:` is the old selector, still the only way
-    /// a keyboard can open its container app.
-    func openContainerApp(_ url: URL) {
-        let selector = NSSelectorFromString("openURL:")
-        var responder: UIResponder? = self
-        while let current = responder {
-            if current.responds(to: selector), current !== self {
-                _ = current.perform(selector, with: url)
-                return
-            }
-            responder = current.next
-        }
-    }
 }

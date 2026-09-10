@@ -32,13 +32,12 @@ struct KeyboardRootView: View {
                 .foregroundStyle(.secondary)
             Text("·").foregroundStyle(.tertiary)
             if model.state.isTappableForSession {
-                Button {
-                    model.openApp()
-                } label: {
+                // A SwiftUI Link is the one thing a keyboard extension can still use to
+                // open its app: iOS 18 shut the old responder-chain `openURL:` route.
+                Link(destination: KeyboardModel.startSessionURL) {
                     Label("Start a session", systemImage: "arrow.up.forward.app")
                         .font(.caption.weight(.semibold))
                 }
-                .buttonStyle(.plain)
                 .foregroundStyle(Color.accentColor)
             } else {
                 Text(model.state.text)
@@ -65,38 +64,53 @@ struct KeyboardRootView: View {
 
     private var micButton: some View {
         VStack(spacing: 4) {
-            ZStack {
-                Circle()
-                    .fill(micColor)
-                    .frame(width: 92, height: 92)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.white.opacity(model.isLatched ? 0.9 : 0), lineWidth: 3)
+            if model.state.isTappableForSession {
+                // No session yet: the mic itself opens the app to start one.
+                Link(destination: KeyboardModel.startSessionURL) { micFace }
+                    .accessibilityLabel("Open Aside to start a session")
+            } else {
+                micFace
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in
+                                guard !holding else { return }
+                                holding = true
+                                model.micDown()
+                            }
+                            .onEnded { _ in
+                                guard holding else { return }
+                                holding = false
+                                model.micUp()
+                            }
                     )
-                Image(systemName: model.state == .listening ? "waveform" : "mic.fill")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(.white)
+                    .accessibilityLabel("Hold to dictate")
             }
-            .contentShape(Circle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard !holding else { return }
-                        holding = true
-                        model.micDown()
-                    }
-                    .onEnded { _ in
-                        guard holding else { return }
-                        holding = false
-                        model.micUp()
-                    }
-            )
-            .accessibilityLabel("Hold to dictate")
 
-            Text(model.isLatched ? "Tap to stop" : "Hold to talk · double-tap to keep going")
+            Text(micCaption)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private var micCaption: String {
+        if model.state.isTappableForSession { return "Tap to open Aside and start a session" }
+        return model.isLatched ? "Tap to stop" : "Hold to talk · double-tap to keep going"
+    }
+
+    private var micFace: some View {
+        ZStack {
+            Circle()
+                .fill(micColor)
+                .frame(width: 92, height: 92)
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(model.isLatched ? 0.9 : 0), lineWidth: 3)
+                )
+            Image(systemName: model.state == .listening ? "waveform" : "mic.fill")
+                .font(.system(size: 34, weight: .medium))
+                .foregroundStyle(.white)
+        }
+        .contentShape(Circle())
     }
 
     private var micColor: Color {
