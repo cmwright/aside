@@ -7,7 +7,12 @@ import WidgetKit
 /// Nothing outside a keyboard can type into another app, so a dictation started here ends
 /// on the clipboard, with a notification showing the text. The extension itself never
 /// records: it writes the same `start` / `stop` commands the keyboard writes into the App
-/// Group and the app, kept alive by its session, does the work. Requires iOS 18.2.
+/// Group and the app, kept alive by its session, does the work.
+///
+/// Requires iOS 26: the intent runs in the background while a session is alive and must
+/// bring the app forward only when there is none. That "decide at run time" behaviour is
+/// the `.foreground(.dynamic)` intent mode, new in 26. On 18 a control's intent either
+/// always opens the app or never can, and `OpenURLIntent` does not honour custom schemes.
 @main
 struct AsideControlBundle: WidgetBundle {
     var body: some Widget {
@@ -48,23 +53,22 @@ struct ToggleDictationIntent: SetValueIntent {
     static let description = IntentDescription(
         "Starts a dictation in Aside, or stops the one in progress and copies the text to the clipboard.")
 
+    /// Background by default; the app is only brought forward when a session has to be
+    /// started, because iOS will not let a backgrounded app begin recording.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+
     @Parameter(title: "Recording")
     var value: Bool
 
-    /// Both branches must produce one concrete result type, so it is named: the plain
-    /// container, which `.result()` and the non-generic `.result(opensIntent:)` both return.
-    typealias Outcome = IntentResultContainer<Never, Never, Never, Never>
-
-    func perform() async throws -> Outcome {
+    func perform() async throws -> some IntentResult {
         guard let store = AsideIPCStore.appGroup() else { throw AsideIPCError.noContainer }
         try store.writeCommand(DictationCommand(action: value ? .start : .stop, source: .control))
         DarwinNotifier.post(AsideIPC.commandNotification)
-        if value, store.activeSession() == nil {
-            // Without a session the app is not running with the microphone, and iOS will not
-            // let it start recording from the background. Open it: it starts a session and
-            // picks up the command just written.
-            return Outcome.result(opensIntent: OpenURLIntent(URL(string: "aside://control/start")!))
+        if value, store.activeSession() == nil, systemContext.currentMode.canContinueInForeground {
+            // No session, so the app is not running with the microphone. Open it: on
+            // becoming active it starts a session and adopts the command just written.
+            try await continueInForeground(alwaysConfirm: false)
         }
-        return Outcome.result()
+        return .result()
     }
 }

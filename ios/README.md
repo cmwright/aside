@@ -13,7 +13,7 @@ is still true in iOS 26, with or without Full Access. So the work is split:
   applies your dictionary;
 - the **keyboard** writes a one-line command into a shared App Group folder, waits for the
   answer, and pastes it;
-- the **control** (Control Center, Lock Screen, or the Action button; iOS 18.2 and later)
+- the **control** (Control Center, Lock Screen, or the Action button; iOS 26 and later)
   writes the same command, and the app puts the answer on the clipboard, with a
   notification showing the text.
 

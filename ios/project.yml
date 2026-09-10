@@ -145,10 +145,10 @@ targets:
   AsideControl:
     type: app-extension
     platform: iOS
-    # Control Center controls are an iOS 18 API and opening the app from one needs 18.2. The
-    # app itself still runs on 17; there the
-    # extension is simply never loaded.
-    deploymentTarget: "18.2"
+    # The control's intent needs the iOS 26 "dynamic foreground" mode to open the app only
+    # when no session is running. The app itself still runs on 17; there the extension is
+    # simply never loaded.
+    deploymentTarget: "26.0"
     sources:
       - path: Control
         excludes:
