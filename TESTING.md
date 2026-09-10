@@ -38,9 +38,9 @@ Expected output, in order:
   `say` + `afconvert` on the first run).
 - `GET /health` -> `{"ok":true,"stt":"groq","cleanup":"openai/gpt-oss-120b"}`.
 - `POST /v1/audio/transcriptions` -> `HTTP 200` and a JSON body whose `text` reads
-  roughly "Hello there, this is a test of HyperComply dictation, and it should come out
-  clean." (`raw_text` still has "um", "you know" and "hyper comply"; `text` has the
-  dictionary replacement `HyperComply` and no fillers), plus `timing_ms`.
+  roughly "Hello there, this is a test of AcmeCloud dictation, and it should come out
+  clean." (`raw_text` still has "um", "you know" and "acme cloud"; `text` has the
+  dictionary replacement `AcmeCloud` and no fillers), plus `timing_ms`.
 
 If instead you see:
 
@@ -123,8 +123,8 @@ then the text appears at the cursor. The Worker terminal logs one
 
 Then, in any of them:
 
-- **Dictionary...**: add term `hyper comply`, replacement `HyperComply`; say "hyper
-  comply" and confirm `HyperComply` is inserted.
+- **Dictionary...**: add term `acme cloud`, replacement `AcmeCloud`; say "hyper
+  comply" and confirm `AcmeCloud` is inserted.
 - **Settings...**: switch Cleanup to **None** and dictate again; fillers and missing
   punctuation come back. Switch to **Medium** to restore the default.
 - Hold the key and release within a quarter second: the pill shows "Too short".
@@ -141,7 +141,7 @@ Then, in any of them:
    says "Transcribing on this Mac" instead and decodes the whole recording now.
 3. Set Cleanup to **None** and remove any dictionary replacements to see it work with the
    Worker stopped: nothing leaves the Mac.
-4. Expect Parakeet to join brand names into one word ("hypercomply"); the dictionary
+4. Expect Parakeet to join brand names into one word ("acmecloud"); the dictionary
    post-pass handles that when the entry has a replacement.
 
 ## 8. Compare raw speech-model output with the cleaned text

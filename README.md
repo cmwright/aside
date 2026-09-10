@@ -65,12 +65,12 @@ the screen, or quitting that app, releases it.
 
 ## Dictionary
 
-Under **Dictionary…**, add the words transcription gets wrong: a *term* ("hyper comply")
-with an optional *replacement* ("HyperComply"). Terms are passed to the speech model as
+Under **Dictionary…**, add the words transcription gets wrong: a *term* ("acme cloud")
+with an optional *replacement* ("AcmeCloud"). Terms are passed to the speech model as
 vocabulary hints, given to the cleanup model as instructions, and, for entries with a
 replacement, applied once more as a deterministic case-insensitive, word-boundary-safe
 substitution so the replacement lands even if the model misses it. It also catches the
-speech model joining the words ("hypercomply").
+speech model joining the words ("acmecloud").
 
 ## Recent Dictations
 

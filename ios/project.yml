@@ -54,11 +54,10 @@ targets:
       - path: ../mac/Sources/Dictionary.swift
       - path: ../mac/Sources/DictionaryReplacer.swift
       - path: ../mac/Sources/CleanupPrompt.swift
-      - path: ../mac/Sources/BackendClient.swift
       - path: ../mac/Sources/AppleCleanup.swift
       - path: ../mac/Sources/LocalTranscriber.swift
       # Direct providers: an OpenAI-compatible endpoint called straight from the phone,
-      # with the key in the keychain. Settings.swift needs these two even if unused.
+      # with the key in the keychain.
       - path: ../mac/Sources/Providers.swift
       - path: ../mac/Sources/APIKeyStore.swift
       - path: ../mac/Sources/DirectClient.swift
@@ -98,7 +97,7 @@ targets:
         # Keeping the audio engine running is what lets a session survive the app going to
         # the background, which is the whole point of "Start Session".
         UIBackgroundModes: [audio]
-        NSMicrophoneUsageDescription: "Aside records your voice while you hold the mic button, and transcribes it on this iPhone or at the backend you configured."
+        NSMicrophoneUsageDescription: "Aside records your voice while you hold the mic button, and transcribes it on this iPhone or at the provider you chose."
 
   AsideKeyboard:
     type: app-extension

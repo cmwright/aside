@@ -44,6 +44,33 @@ final class AppSettings: ObservableObject {
 
     static let defaultBackendURL = "http://localhost:8787"
 
+    /// What a fresh install uses. The iPhone app has no Worker option and starts fully
+    /// on-device; a Worker value left by an older build or a shared defaults suite is
+    /// mapped the same way when it is read.
+    #if os(iOS)
+    static let defaultTranscriptionMode: TranscriptionMode = .local
+    static let defaultCleanupEngine: CleanupEngine = .apple
+    #else
+    static let defaultTranscriptionMode: TranscriptionMode = .cloud
+    static let defaultCleanupEngine: CleanupEngine = .worker
+    #endif
+
+    nonisolated static func supported(_ mode: TranscriptionMode) -> TranscriptionMode {
+        #if os(iOS)
+        return mode == .cloud ? .local : mode
+        #else
+        return mode
+        #endif
+    }
+
+    nonisolated static func supported(_ engine: CleanupEngine) -> CleanupEngine {
+        #if os(iOS)
+        return engine == .worker ? .apple : engine
+        #else
+        return engine
+        #endif
+    }
+
     private let defaults: UserDefaults
 
     @Published var backendURLString: String { didSet { defaults.set(backendURLString, forKey: Key.backendURL) } }
@@ -78,9 +105,9 @@ final class AppSettings: ObservableObject {
             Key.playSounds: true,
             Key.holdRightOption: true,
             Key.doubleTapToLatch: true,
-            Key.transcriptionMode: TranscriptionMode.cloud.rawValue,
+            Key.transcriptionMode: AppSettings.defaultTranscriptionMode.rawValue,
             Key.logDictationsToFile: false,
-            Key.cleanupEngine: CleanupEngine.worker.rawValue,
+            Key.cleanupEngine: AppSettings.defaultCleanupEngine.rawValue,
             Key.cleanup: CleanupLevel.medium.rawValue,
             Key.directChatProvider: ProviderPreset.cerebras.id,
             Key.directSttProvider: ProviderPreset.groq.id,
@@ -91,9 +118,11 @@ final class AppSettings: ObservableObject {
         playSounds = defaults.bool(forKey: Key.playSounds)
         holdRightOption = defaults.bool(forKey: Key.holdRightOption)
         doubleTapToLatch = defaults.bool(forKey: Key.doubleTapToLatch)
-        transcriptionMode = TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? .cloud
+        transcriptionMode = AppSettings.supported(
+            TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? AppSettings.defaultTranscriptionMode)
         logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
-        cleanupEngine = CleanupEngine(rawValue: defaults.string(forKey: Key.cleanupEngine) ?? "") ?? .worker
+        cleanupEngine = AppSettings.supported(
+            CleanupEngine(rawValue: defaults.string(forKey: Key.cleanupEngine) ?? "") ?? AppSettings.defaultCleanupEngine)
         directChatProvider = defaults.string(forKey: Key.directChatProvider) ?? ProviderPreset.cerebras.id
         directChatModel = defaults.string(forKey: Key.directChatModel) ?? ""
         directChatBaseURL = defaults.string(forKey: Key.directChatBaseURL) ?? ""

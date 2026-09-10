@@ -20,7 +20,7 @@ struct DictationRecord: Identifiable, Sendable {
         switch engine {
         case .local: return "Parakeet v3 (on this iPhone)"
         case .direct: return "provider, direct"
-        case .cloud: return "cloud (Worker)"
+        case .cloud: return "Worker (not available on iPhone)"
         }
     }
     var changed: Bool { rawText.trimmingCharacters(in: .whitespacesAndNewlines) != finalText }
@@ -70,7 +70,6 @@ final class SessionController: ObservableObject {
     let phone: PhoneSettings
 
     private let recorder = SessionRecorder()
-    private let client = BackendClient()
     private let direct = DirectClient()
     private let ipc = AppGroupStorage.ipc
 
@@ -108,10 +107,115 @@ final class SessionController: ObservableObject {
     /// to us, and the app is only useful standalone.
     var appGroupAvailable: Bool { AppGroupStorage.isShared }
 
+    enum Tab: Hashable { case home, dictionary, settings, recent }
+    @Published var selectedTab: Tab = .home
+
+    // MARK: - Configuration
+
+    /// Why a dictation cannot run right now. Home shows it and disables the buttons rather
+    /// than letting a recording fail after the fact.
+    enum ConfigurationProblem: Error, Equatable, LocalizedError {
+        case microphoneDenied
+        case modelNotLoaded
+        case modelLoading
+        case modelFailed(String)
+        case speechProviderIncomplete
+        case speechKeyMissing(String)
+        case cleanupProviderIncomplete
+        case cleanupKeyMissing(String)
+        case appleUnavailable(String)
+        case unsupportedEngine
+
+        var message: String {
+            switch self {
+            case .microphoneDenied:
+                return "Microphone access is off for Aside. Allow it in iPhone Settings."
+            case .modelNotLoaded:
+                return "Parakeet v3 is not downloaded yet. It is about 600 MB, once."
+            case .modelLoading:
+                return "Parakeet v3 is loading."
+            case .modelFailed(let why):
+                return "Parakeet v3 failed to load: \(why)"
+            case .speechProviderIncomplete:
+                return "The speech provider needs a model and a base URL."
+            case .speechKeyMissing(let provider):
+                return "Add your \(provider) API key for speech to text."
+            case .cleanupProviderIncomplete:
+                return "The cleanup provider needs a model and a base URL."
+            case .cleanupKeyMissing(let provider):
+                return "Add your \(provider) API key for cleanup."
+            case .appleUnavailable(let why):
+                return "Apple on-device model unavailable: \(why)"
+            case .unsupportedEngine:
+                return "The Worker is not available on iPhone. Pick another engine."
+            }
+        }
+
+        var errorDescription: String? { message }
+
+        /// What the button under the message should do.
+        enum Fix: Equatable { case systemSettings, loadModel, appSettings, wait }
+
+        var fix: Fix {
+            switch self {
+            case .microphoneDenied: return .systemSettings
+            case .modelNotLoaded, .modelFailed: return .loadModel
+            case .modelLoading: return .wait
+            default: return .appSettings
+            }
+        }
+    }
+
+    /// Nil when everything the current settings need is in place.
+    func configurationProblem() -> ConfigurationProblem? {
+        if SessionRecorder.microphonePermission == .denied { return .microphoneDenied }
+        switch settings.transcriptionMode {
+        case .local:
+            switch LocalTranscriber.shared.state {
+            case .notLoaded: return .modelNotLoaded
+            case .loading: return .modelLoading
+            case .failed(let why): return .modelFailed(why)
+            case .ready: break
+            }
+        case .direct:
+            guard let endpoint = settings.directSttEndpoint() else { return .speechProviderIncomplete }
+            let preset = ProviderPreset.preset(id: settings.directSttProvider)
+            if preset.needsKey && (endpoint.apiKey ?? "").isEmpty { return .speechKeyMissing(preset.name) }
+        case .cloud:
+            return .unsupportedEngine
+        }
+        guard settings.cleanup != .none else { return nil }
+        switch settings.cleanupEngine {
+        case .direct:
+            guard let endpoint = settings.directChatEndpoint() else { return .cleanupProviderIncomplete }
+            let preset = ProviderPreset.preset(id: settings.directChatProvider)
+            if preset.needsKey && (endpoint.apiKey ?? "").isEmpty { return .cleanupKeyMissing(preset.name) }
+        case .apple:
+            switch AppleCleanup.shared.availability {
+            case .available: break
+            case .unsupportedOS: return .appleUnavailable("it needs iOS 26 or later.")
+            case .unavailable(let why): return .appleUnavailable(SessionController.phoneWording(why))
+            }
+        case .worker:
+            return .unsupportedEngine
+        }
+        return nil
+    }
+
+    /// `AppleCleanup` is shared with the Mac app and phrases its reasons for a Mac.
+    static func phoneWording(_ text: String) -> String {
+        text.replacingOccurrences(of: "this Mac", with: "this iPhone")
+            .replacingOccurrences(of: "System Settings", with: "Settings")
+    }
+
     // MARK: - Session lifecycle
 
     func startSession() {
         guard !isSessionActive else { return }
+        if let problem = configurationProblem() {
+            phase = .failed(problem.message)
+            return
+        }
         ipc.purge()
         do {
             try recorder.startSession()
@@ -258,6 +362,10 @@ final class SessionController: ObservableObject {
     /// The in-app hold-to-talk button. Starts the audio engine on its own when no session
     /// is running, so the app is useful without ever enabling the keyboard.
     func pushToTalkDown() {
+        if let problem = configurationProblem() {
+            phase = .failed(problem.message)
+            return
+        }
         if !recorder.isRunning {
             do {
                 try recorder.startSession()
@@ -352,15 +460,12 @@ final class SessionController: ObservableObject {
         var engine: CleanupEngine
         var level: CleanupLevel
         var entries: [DictionaryEntry]
-        var baseURL: URL?
-        var token: String?
         var direct: DirectEndpoint?
         var directNeedsKey: Bool
     }
 
     private func cleanupPlan() -> CleanupPlan {
         CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
-                    baseURL: settings.backendURL, token: settings.trimmedToken,
                     direct: settings.directChatEndpoint(),
                     directNeedsKey: ProviderPreset.preset(id: settings.directChatProvider).needsKey)
     }
@@ -395,37 +500,16 @@ final class SessionController: ObservableObject {
                 return
 
             case .cloud:
-                break
+                // The iPhone app has no Worker option; Settings never writes this value.
+                throw ConfigurationProblem.unsupportedEngine
             }
-
-            guard let baseURL = plan.baseURL else { throw BackendError.badURL }
-            let response = try await client.transcribe(TranscriptionRequest(
-                baseURL: baseURL,
-                token: plan.token,
-                audio: audio,
-                dictionaryJSON: DictionaryCodec.encodeForRequest(plan.entries),
-                // When cleanup runs on this phone the Worker is asked for the raw transcript.
-                cleanup: plan.engine == .worker ? plan.level : .none,
-                appName: nil
-            ))
-            if plan.engine == .worker {
-                finish(raw: response.rawText ?? response.text, text: response.text, engine: .cloud,
-                       cleanupLabel: plan.level == .none ? "none" : "Worker",
-                       sttMs: Int(response.timing?.stt ?? 0), cleanupMs: Int(response.timing?.cleanup ?? 0),
-                       origin: origin)
-                return
-            }
-            let raw = response.rawText ?? response.text
-            let result = try await runCleanup(raw: raw, plan: plan)
-            finish(raw: raw, text: result.text, engine: .cloud, cleanupLabel: result.label,
-                   sttMs: Int(response.timing?.stt ?? 0), cleanupMs: result.ms, origin: origin)
         } catch {
             fail(error.localizedDescription, origin: origin)
         }
     }
 
-    /// The cleanup stage for a transcript already in hand. The Worker applies the dictionary
-    /// post-pass itself; every other path runs the Swift port so the result is the same.
+    /// The cleanup stage for a transcript already in hand, followed by the dictionary
+    /// post-pass, exactly as on the Mac.
     private func runCleanup(raw: String, plan: CleanupPlan) async throws -> (text: String, ms: Int, label: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return ("", 0, "none") }
@@ -436,12 +520,7 @@ final class SessionController: ObservableObject {
         let started = Date()
         switch plan.engine {
         case .worker:
-            guard let baseURL = plan.baseURL else { throw BackendError.badURL }
-            let response = try await client.cleanup(CleanupRequest(
-                baseURL: baseURL, token: plan.token, text: trimmed,
-                dictionaryJSON: DictionaryCodec.encodeForRequest(plan.entries),
-                cleanup: plan.level, appName: nil))
-            return (response.text, Int(response.timing?.cleanup ?? Date().timeIntervalSince(started) * 1000), "Worker")
+            throw ConfigurationProblem.unsupportedEngine
         case .direct:
             guard let endpoint = plan.direct else {
                 throw DirectError.badResponse("a usable cleanup provider (check Settings)")
@@ -532,7 +611,7 @@ final class SessionController: ObservableObject {
         switch engine {
         case .local: return "on this iPhone (Parakeet v3)"
         case .direct: return settings.directSttEndpoint()?.label ?? "a provider, directly"
-        case .cloud: return "cloud (Worker)"
+        case .cloud: return "Worker (not available on iPhone)"
         }
     }
 

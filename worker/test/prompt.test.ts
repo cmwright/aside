@@ -12,7 +12,7 @@ import {
 import type { DictionaryEntry } from '../src/types';
 
 const ENTRIES: DictionaryEntry[] = [
-  { term: 'hyper comply', replacement: 'HyperComply' },
+  { term: 'acme cloud', replacement: 'AcmeCloud' },
   { term: 'Kubernetes' },
 ];
 
@@ -71,7 +71,7 @@ describe('buildCleanupSystemPrompt', () => {
   it('includes every dictionary term, with replacement instructions where present', () => {
     const prompt = buildCleanupSystemPrompt('medium', ENTRIES);
     expect(prompt).toContain('User dictionary');
-    expect(prompt).toContain('sounds like "hyper comply", write it as "HyperComply"');
+    expect(prompt).toContain('sounds like "acme cloud", write it as "AcmeCloud"');
     expect(prompt).toContain('Spell "Kubernetes" exactly');
   });
 
@@ -102,8 +102,8 @@ describe('buildSttPrompt', () => {
 
   it('lists the dictionary vocabulary', () => {
     const prompt = buildSttPrompt(ENTRIES);
-    expect(prompt).toContain('HyperComply');
-    expect(prompt).toContain('hyper comply');
+    expect(prompt).toContain('AcmeCloud');
+    expect(prompt).toContain('acme cloud');
     expect(prompt).toContain('Kubernetes');
     expect(prompt.startsWith('Vocabulary: ')).toBe(true);
   });
@@ -121,7 +121,7 @@ describe('buildSttPrompt', () => {
 
 describe('buildKeyterms', () => {
   it('returns one keyterm per distinct spelling and nothing when empty', () => {
-    expect(buildKeyterms(ENTRIES)).toEqual(['HyperComply', 'hyper comply', 'Kubernetes']);
+    expect(buildKeyterms(ENTRIES)).toEqual(['AcmeCloud', 'acme cloud', 'Kubernetes']);
     expect(buildKeyterms([])).toEqual([]);
   });
 });

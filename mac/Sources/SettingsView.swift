@@ -80,7 +80,7 @@ struct EnginesSettingsView: View {
                 }
                 if settings.transcriptionMode == .local {
                     HStack {
-                        Text(localTranscriber.state.label)
+                        Text(localTranscriber.statusLine)
                             .font(.caption)
                             .foregroundStyle(localTranscriber.state == .ready ? .green : .secondary)
                         if localTranscriber.state != .ready && localTranscriber.state != .loading {

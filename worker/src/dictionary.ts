@@ -69,14 +69,14 @@ const WORDISH = /[\p{L}\p{N}]/u;
 
 /**
  * Regex source that matches `term` case-insensitively, tolerating hyphen /
- * whitespace variation between its words ("hyper comply" also matches
- * "hyper-comply"), and only at word boundaries so "comply" never eats the
+ * whitespace variation between its words ("acme cloud" also matches
+ * "acme-cloud"), and only at word boundaries so "comply" never eats the
  * "comply" inside "compliance".
  */
 function termPattern(term: string): string {
   const words = term.trim().split(/\s+/).map(escapeRegExp);
   // Zero or more separators: speech models often join the words of a name
-  // ("hypercomply" for "hyper comply"), and the outer word boundaries still apply.
+  // ("acmecloud" for "acme cloud"), and the outer word boundaries still apply.
   const body = words.join('[\\s\\u00a0-]*');
   const leading = WORDISH.test(term[0] ?? '') ? '(?<![\\p{L}\\p{N}])' : '';
   const lastChar = term[term.length - 1] ?? '';

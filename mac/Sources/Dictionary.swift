@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 /// One vocabulary hint. `term` is what the user says; `replacement`, when present, is what
-/// should be written instead ("hyper comply" -> "HyperComply").
+/// should be written instead ("acme cloud" -> "AcmeCloud").
 struct DictionaryEntry: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var term: String

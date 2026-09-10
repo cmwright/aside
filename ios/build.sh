@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Generates the iOS Xcode project and compiles both targets for a generic iOS device
-# without signing. There is no usable iOS simulator runtime on this machine, so this is
-# the verification: it proves the app and the keyboard extension build.
+# without signing: the quick verification that the app and the keyboard extension build.
 #
 # To actually put it on a phone, open ios/Aside.xcodeproj in Xcode, pick your iPhone and
 # press Run — see README.md.

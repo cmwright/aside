@@ -43,7 +43,7 @@ final class AsideTests: XCTestCase {
             baseURL: URL(string: "http://localhost:8787")!,
             token: "t",
             audio: Data("WAVBYTES".utf8),
-            dictionaryJSON: #"[{"replacement":"HyperComply","term":"hyper comply"}]"#,
+            dictionaryJSON: #"[{"replacement":"AcmeCloud","term":"acme cloud"}]"#,
             cleanup: .medium,
             appName: "Notes"
         )
@@ -92,14 +92,14 @@ final class AsideTests: XCTestCase {
 
     func testEncodeForRequestDropsEmptyTermsAndBlankReplacements() throws {
         let entries = [
-            DictionaryEntry(term: "hyper comply", replacement: "HyperComply"),
+            DictionaryEntry(term: "acme cloud", replacement: "AcmeCloud"),
             DictionaryEntry(term: "Kubernetes", replacement: "  "),
             DictionaryEntry(term: "   ", replacement: "ignored"),
         ]
         let json = DictionaryCodec.encodeForRequest(entries)
         let decoded = try JSONDecoder().decode([DictionaryEntry.Wire].self, from: Data(json.utf8))
         XCTAssertEqual(decoded.count, 2)
-        XCTAssertEqual(decoded[0].replacement, "HyperComply")
+        XCTAssertEqual(decoded[0].replacement, "AcmeCloud")
         XCTAssertNil(decoded[1].replacement)
     }
 
@@ -112,12 +112,12 @@ final class AsideTests: XCTestCase {
 
     func testMergePrefersImportedReplacement() {
         let merged = DictionaryStore.merge(
-            existing: [DictionaryEntry(term: "Hyper Comply", replacement: "old")],
-            imported: [DictionaryEntry(term: "hyper comply", replacement: "HyperComply"),
+            existing: [DictionaryEntry(term: "Acme Cloud", replacement: "old")],
+            imported: [DictionaryEntry(term: "acme cloud", replacement: "AcmeCloud"),
                        DictionaryEntry(term: "new term")]
         )
         XCTAssertEqual(merged.count, 2)
-        XCTAssertEqual(merged[0].replacement, "HyperComply")
+        XCTAssertEqual(merged[0].replacement, "AcmeCloud")
         XCTAssertEqual(merged[1].term, "new term")
     }
 
@@ -314,7 +314,7 @@ final class AsideTests: XCTestCase {
     func testStreamingSessionMatchesWholeClip() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")
         let pcm = try Self.synthesizedSpeech(
-            "Hello there, this is a longer test of dictation on this Mac. I am going to keep talking for a while so that the recording runs well past the first eleven second window. The quick brown fox jumps over the lazy dog, and then it goes back and does it again because nobody was watching the first time. We should also mention a few product names like HyperComply and a number like forty two, plus a question: does the streaming path drop or repeat words at the seams? Let us find out by comparing it against the whole clip transcription that the app used before this change.")
+            "Hello there, this is a longer test of dictation on this Mac. I am going to keep talking for a while so that the recording runs well past the first eleven second window. The quick brown fox jumps over the lazy dog, and then it goes back and does it again because nobody was watching the first time. We should also mention a few product names like AcmeCloud and a number like forty two, plus a question: does the streaming path drop or repeat words at the seams? Let us find out by comparing it against the whole clip transcription that the app used before this change.")
         XCTAssertGreaterThan(WAV.duration(ofPCM16: pcm.count), 25, "clip should cross two window seams")
 
         let transcriber = LocalTranscriber.shared
@@ -347,13 +347,13 @@ final class AsideTests: XCTestCase {
 
     // MARK: - Dictionary post-pass (Swift port)
 
-    private let hc = [DictionaryEntry(term: "hyper comply", replacement: "HyperComply")]
+    private let hc = [DictionaryEntry(term: "acme cloud", replacement: "AcmeCloud")]
 
     func testReplacerBasicsMatchWorker() {
-        XCTAssertEqual(DictionaryReplacer.apply("a test of hyper comply dictation", entries: hc), "a test of HyperComply dictation")
-        XCTAssertEqual(DictionaryReplacer.apply("Hyper Comply rocks", entries: hc), "HyperComply rocks")
-        XCTAssertEqual(DictionaryReplacer.apply("hyper-comply and hypercomply", entries: hc), "HyperComply and HyperComply")
-        XCTAssertEqual(DictionaryReplacer.apply("hypercomplying is not a word", entries: hc), "hypercomplying is not a word")
+        XCTAssertEqual(DictionaryReplacer.apply("a test of acme cloud dictation", entries: hc), "a test of AcmeCloud dictation")
+        XCTAssertEqual(DictionaryReplacer.apply("Acme Cloud rocks", entries: hc), "AcmeCloud rocks")
+        XCTAssertEqual(DictionaryReplacer.apply("acme-cloud and acmecloud", entries: hc), "AcmeCloud and AcmeCloud")
+        XCTAssertEqual(DictionaryReplacer.apply("acmeclouding is not a word", entries: hc), "acmeclouding is not a word")
     }
 
     func testReplacerWordBoundariesAndEmpty() {
@@ -389,7 +389,7 @@ final class AsideTests: XCTestCase {
         XCTAssertTrue(light.contains("Do not remove filler words"))
         XCTAssertFalse(light.contains("User dictionary"))
         XCTAssertTrue(medium.contains("Remove filler words"))
-        XCTAssertTrue(medium.contains("sounds like \"hyper comply\", write it as \"HyperComply\""))
+        XCTAssertTrue(medium.contains("sounds like \"acme cloud\", write it as \"AcmeCloud\""))
         XCTAssertEqual(CleanupPrompt.sanitize("\"Hello there.\""), "Hello there.")
         XCTAssertEqual(CleanupPrompt.sanitize("  plain  "), "plain")
     }
@@ -406,9 +406,9 @@ final class AsideTests: XCTestCase {
     }
 
     func testVocabularyHintsAndCap() {
-        let entries = [DictionaryEntry(term: "hyper comply", replacement: "HyperComply"),
+        let entries = [DictionaryEntry(term: "acme cloud", replacement: "AcmeCloud"),
                        DictionaryEntry(term: "Parakeet"), DictionaryEntry(term: "parakeet")]
-        XCTAssertEqual(DirectClient.vocabulary(from: entries), ["HyperComply", "hyper comply", "Parakeet"])
+        XCTAssertEqual(DirectClient.vocabulary(from: entries), ["AcmeCloud", "acme cloud", "Parakeet"])
         XCTAssertEqual(DirectClient.vocabularyPrompt(["a", "b"]), "Vocabulary: a, b.")
         XCTAssertNil(DirectClient.vocabularyPrompt([]))
         XCTAssertEqual(DirectClient.vocabularyPrompt(["aaaa", "bbbb"], maxChars: 7), "Vocabulary: aaaa.")

@@ -30,7 +30,7 @@ struct PhoneDictionaryView: View {
                         store.remove(ids: Set(offsets.map { store.entries[$0].id }))
                     }
                 } footer: {
-                    Text("A term on its own teaches the spelling. Add a replacement to rewrite what was heard — \"hyper comply\" → \"HyperComply\".")
+                    Text("A term on its own teaches the spelling. Add a replacement to rewrite what was heard — \"acme cloud\" → \"AcmeCloud\".")
                 }
                 if let error = store.lastError {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -75,12 +75,12 @@ private struct DictionaryEntrySheet: View {
         NavigationStack {
             Form {
                 Section("Term") {
-                    TextField("hyper comply", text: $term)
+                    TextField("acme cloud", text: $term)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
                 Section("Replacement (optional)") {
-                    TextField("HyperComply", text: $replacement)
+                    TextField("AcmeCloud", text: $replacement)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }

@@ -49,15 +49,19 @@ struct RootView: View {
     @EnvironmentObject private var controller: SessionController
 
     var body: some View {
-        TabView {
+        TabView(selection: $controller.selectedTab) {
             HomeView()
                 .tabItem { Label("Home", systemImage: "mic") }
+                .tag(SessionController.Tab.home)
             PhoneDictionaryView()
                 .tabItem { Label("Dictionary", systemImage: "character.book.closed") }
+                .tag(SessionController.Tab.dictionary)
             PhoneSettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(SessionController.Tab.settings)
             RecentView()
                 .tabItem { Label("Recent", systemImage: "clock") }
+                .tag(SessionController.Tab.recent)
         }
     }
 }

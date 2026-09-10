@@ -9,9 +9,6 @@ struct PhoneSettingsView: View {
     @StateObject private var transcriber = LocalTranscriber.shared
     @StateObject private var appleCleanup = AppleCleanup.shared
 
-    @State private var healthResult: String?
-    @State private var testing = false
-
     var body: some View {
         NavigationStack {
             Form {
@@ -19,14 +16,20 @@ struct PhoneSettingsView: View {
                     Picker("Transcription", selection: $settings.transcriptionMode) {
                         Text("On this iPhone (Parakeet v3)").tag(TranscriptionMode.local)
                         Text("A provider, directly with your API key").tag(TranscriptionMode.direct)
-                        Text("The Worker (self-hosted backend)").tag(TranscriptionMode.cloud)
                     }
                     if settings.transcriptionMode == .local {
-                        HStack {
-                            Text(parakeetStatus).font(.footnote).foregroundStyle(.secondary)
-                            Spacer()
-                            if transcriber.state == .notLoaded || isFailed(transcriber.state) {
-                                Button("Load") { transcriber.prepare() }.font(.footnote)
+                        if transcriber.state == .loading {
+                            ModelLoadingView(progress: transcriber.progress)
+                        } else {
+                            HStack {
+                                Text(parakeetStatus).font(.footnote).foregroundStyle(.secondary)
+                                Spacer()
+                                if transcriber.state == .notLoaded || isFailed(transcriber.state) {
+                                    Button(transcriber.state == .notLoaded ? "Download" : "Try Again") {
+                                        transcriber.prepare()
+                                    }
+                                    .font(.footnote)
+                                }
                             }
                         }
                     }
@@ -47,7 +50,6 @@ struct PhoneSettingsView: View {
                     Picker("Engine", selection: $settings.cleanupEngine) {
                         Text("A provider, directly").tag(CleanupEngine.direct)
                         Text("Apple on-device model").tag(CleanupEngine.apple)
-                        Text("The Worker").tag(CleanupEngine.worker)
                     }
                     .disabled(settings.cleanup == .none)
                     if settings.cleanupEngine == .apple, settings.cleanup != .none {
@@ -78,25 +80,6 @@ struct PhoneSettingsView: View {
                     }
                 }
 
-                if usesWorker {
-                    Section {
-                        TextField("http://localhost:8787", text: $settings.backendURLString)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                        SecureField("Token (optional)", text: $settings.backendToken)
-                        Button(testing ? "Testing…" : "Test Connection") { test() }
-                            .disabled(testing || settings.backendURL == nil)
-                        if let healthResult {
-                            Text(healthResult).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    } header: {
-                        Text("Worker")
-                    } footer: {
-                        Text("A phone cannot reach your Mac's localhost — use the Mac's LAN address or a deployed Worker.")
-                    }
-                }
-
                 Section {
                     Picker("Session length", selection: $phone.sessionLength) {
                         ForEach(SessionLength.allCases) { length in
@@ -119,14 +102,10 @@ struct PhoneSettingsView: View {
         settings.transcriptionMode == .direct || (settings.cleanupEngine == .direct && settings.cleanup != .none)
     }
 
-    private var usesWorker: Bool {
-        settings.transcriptionMode == .cloud || (settings.cleanupEngine == .worker && settings.cleanup != .none)
-    }
-
     private var parakeetStatus: String {
         switch transcriber.state {
         case .notLoaded: return "Model not downloaded yet (~600 MB, once)."
-        case .loading: return "Downloading / loading Parakeet v3…"
+        case .loading: return transcriber.statusLine
         case .ready: return "Parakeet v3 ready."
         case .failed(let message): return "Model failed: \(message)"
         }
@@ -137,8 +116,6 @@ struct PhoneSettingsView: View {
         return false
     }
 
-    /// `AppleCleanup` is shared with the Mac app and phrases its reasons for a Mac; this is
-    /// the one place that has to say "iPhone" instead. The shared file is not edited for it.
     private var appleStatus: String {
         switch appleCleanup.availability {
         case .available:
@@ -146,24 +123,7 @@ struct PhoneSettingsView: View {
         case .unsupportedOS:
             return "Apple on-device model needs iOS 26 or later."
         case .unavailable(let why):
-            return "Apple on-device model unavailable: "
-                + why.replacingOccurrences(of: "this Mac", with: "this iPhone")
-                    .replacingOccurrences(of: "System Settings", with: "Settings")
-        }
-    }
-
-    private func test() {
-        guard let baseURL = settings.backendURL else { return }
-        testing = true
-        healthResult = nil
-        let token = settings.trimmedToken
-        Task {
-            do {
-                healthResult = try await BackendClient().health(baseURL: baseURL, token: token)
-            } catch {
-                healthResult = error.localizedDescription
-            }
-            testing = false
+            return "Apple on-device model unavailable: " + SessionController.phoneWording(why)
         }
     }
 }

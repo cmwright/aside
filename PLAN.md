@@ -40,7 +40,7 @@ auto-learning the dictionary, iOS, notarization, auto-update.
   - `dictionary`: JSON string, an array of `{ "term": string, "replacement"?: string }`.
     `term` is a word or phrase the user wants recognized as spelled. `replacement`, when
     present, means "when the transcript contains something that sounds like `term`,
-    write `replacement` instead" (e.g. term "hyper comply" -> replacement "HyperComply").
+    write `replacement` instead" (e.g. term "acme cloud" -> replacement "AcmeCloud").
   - `cleanup`: `"none" | "light" | "medium"`. Default `medium`.
   - `app_name`: optional string, the frontmost app's name, for future per-app tone.
     The Worker may ignore it in this prototype.

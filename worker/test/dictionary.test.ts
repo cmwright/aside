@@ -2,34 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { applyReplacements, parseDictionary, vocabularyHints } from '../src/dictionary';
 import { BadRequestError, type DictionaryEntry } from '../src/types';
 
-const HYPERCOMPLY: DictionaryEntry[] = [
-  { term: 'hyper comply', replacement: 'HyperComply' },
+const ACME: DictionaryEntry[] = [
+  { term: 'acme cloud', replacement: 'AcmeCloud' },
   { term: 'cody wright', replacement: 'Cody Wright' },
 ];
 
 describe('applyReplacements', () => {
   it('replaces a term with its replacement', () => {
-    expect(applyReplacements('I work at hyper comply today.', HYPERCOMPLY)).toBe(
-      'I work at HyperComply today.',
+    expect(applyReplacements('I work at acme cloud today.', ACME)).toBe(
+      'I work at AcmeCloud today.',
     );
   });
 
   it('matches case-insensitively and writes the replacement casing exactly', () => {
-    expect(applyReplacements('HYPER COMPLY and Hyper Comply and hyper comply', HYPERCOMPLY)).toBe(
-      'HyperComply and HyperComply and HyperComply',
+    expect(applyReplacements('ACME CLOUD and Acme Cloud and acme cloud', ACME)).toBe(
+      'AcmeCloud and AcmeCloud and AcmeCloud',
     );
   });
 
   it('tolerates hyphen and extra whitespace between the words of a term', () => {
-    expect(applyReplacements('hyper-comply and hyper   comply', HYPERCOMPLY)).toBe(
-      'HyperComply and HyperComply',
+    expect(applyReplacements('acme-cloud and acme   cloud', ACME)).toBe(
+      'AcmeCloud and AcmeCloud',
     );
   });
 
   it('respects word boundaries and never rewrites the inside of a longer word', () => {
-    const entries: DictionaryEntry[] = [{ term: 'comply', replacement: 'HyperComply' }];
-    expect(applyReplacements('compliance complying non-comply comply.', entries)).toBe(
-      'compliance complying non-HyperComply HyperComply.',
+    const entries: DictionaryEntry[] = [{ term: 'cloud', replacement: 'AcmeCloud' }];
+    expect(applyReplacements('cloudy clouding non-cloud cloud.', entries)).toBe(
+      'cloudy clouding non-AcmeCloud AcmeCloud.',
     );
   });
 
@@ -49,7 +49,7 @@ describe('applyReplacements', () => {
   });
 
   it('handles empty input text', () => {
-    expect(applyReplacements('', HYPERCOMPLY)).toBe('');
+    expect(applyReplacements('', ACME)).toBe('');
   });
 
   it('prefers the longest matching term when terms overlap', () => {
@@ -71,7 +71,7 @@ describe('applyReplacements', () => {
   });
 
   it('keeps punctuation next to a replaced term', () => {
-    expect(applyReplacements('...hyper comply, right?', HYPERCOMPLY)).toBe('...HyperComply, right?');
+    expect(applyReplacements('...acme cloud, right?', ACME)).toBe('...AcmeCloud, right?');
   });
 
   it('handles terms containing regex metacharacters', () => {
@@ -91,8 +91,8 @@ describe('parseDictionary', () => {
 
   it('parses terms with and without replacements', () => {
     expect(
-      parseDictionary('[{"term":"hyper comply","replacement":"HyperComply"},{"term":"Kubernetes"}]'),
-    ).toEqual([{ term: 'hyper comply', replacement: 'HyperComply' }, { term: 'Kubernetes' }]);
+      parseDictionary('[{"term":"acme cloud","replacement":"AcmeCloud"},{"term":"Kubernetes"}]'),
+    ).toEqual([{ term: 'acme cloud', replacement: 'AcmeCloud' }, { term: 'Kubernetes' }]);
   });
 
   it('drops blank terms and blank replacements', () => {
@@ -112,9 +112,9 @@ describe('parseDictionary', () => {
 
 describe('vocabularyHints', () => {
   it('lists replacements first, then terms, case-insensitively deduped', () => {
-    expect(vocabularyHints(HYPERCOMPLY)).toEqual([
-      'HyperComply',
-      'hyper comply',
+    expect(vocabularyHints(ACME)).toEqual([
+      'AcmeCloud',
+      'acme cloud',
       'Cody Wright',
     ]);
   });
@@ -124,9 +124,9 @@ describe('vocabularyHints', () => {
   });
 
   it('matches a multi-word term whose words the speech model joined together', () => {
-    const entries = [{ term: 'hyper comply', replacement: 'HyperComply' }];
-    expect(applyReplacements('a test of hypercomply dictation', entries)).toBe('a test of HyperComply dictation');
-    expect(applyReplacements('a test of hyper-comply dictation', entries)).toBe('a test of HyperComply dictation');
-    expect(applyReplacements('hypercomplying is not a word', entries)).toBe('hypercomplying is not a word');
+    const entries = [{ term: 'acme cloud', replacement: 'AcmeCloud' }];
+    expect(applyReplacements('a test of acmecloud dictation', entries)).toBe('a test of AcmeCloud dictation');
+    expect(applyReplacements('a test of acme-cloud dictation', entries)).toBe('a test of AcmeCloud dictation');
+    expect(applyReplacements('acmeclouding is not a word', entries)).toBe('acmeclouding is not a word');
   });
 });

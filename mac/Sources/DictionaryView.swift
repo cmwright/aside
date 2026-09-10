@@ -11,7 +11,7 @@ struct DictionaryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Words the transcriber should get right. Leave Replacement empty to just teach it the spelling; fill it in to rewrite what it heard (say “hyper comply”, write “HyperComply”).")
+            Text("Words the transcriber should get right. Leave Replacement empty to just teach it the spelling; fill it in to rewrite what it heard (say “acme cloud”, write “AcmeCloud”).")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

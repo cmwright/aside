@@ -19,14 +19,14 @@ set -euo pipefail
 
 BASE_URL="${BACKEND_URL:-http://localhost:8787}"
 CLEANUP="${CLEANUP:-medium}"
-SAY_TEXT="${SAY_TEXT:-Um, hello there, this is a test of hyper comply dictation, you know, and it should come out clean.}"
+SAY_TEXT="${SAY_TEXT:-Um, hello there, this is a test of acme cloud dictation, you know, and it should come out clean.}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 worker_dir="$(dirname "$script_dir")"
 fixture="$worker_dir/test/fixtures/hello.wav"
 
 # Dictionary in the exact shape the contract documents.
-DICTIONARY='[{"term":"hyper comply","replacement":"HyperComply"},{"term":"Kubernetes"}]'
+DICTIONARY='[{"term":"acme cloud","replacement":"AcmeCloud"},{"term":"Kubernetes"}]'
 
 if [[ ! -f "$fixture" ]]; then
   if [[ "$(uname -s)" != "Darwin" ]]; then

@@ -5,8 +5,14 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var controller: SessionController
     @EnvironmentObject private var phone: PhoneSettings
+    // Observed so the gate re-evaluates as the model downloads or Apple Intelligence changes.
+    @ObservedObject private var transcriber = LocalTranscriber.shared
+    @ObservedObject private var appleCleanup = AppleCleanup.shared
+    @Environment(\.openURL) private var openURL
     @State private var holding = false
     @State private var copied = false
+
+    private var problem: SessionController.ConfigurationProblem? { controller.configurationProblem() }
 
     var body: some View {
         NavigationStack {
@@ -18,6 +24,7 @@ struct HomeView: View {
                     if !controller.appGroupAvailable {
                         warning("The app group is not available in this build, so the keyboard cannot reach the app. Run the app from Xcode with your own team so it gets the App Group entitlement.")
                     }
+                    if let problem { configurationCard(problem) }
                     sessionCard
                     talkCard
                     if !controller.lastText.isEmpty { lastResultCard }
@@ -57,6 +64,7 @@ struct HomeView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(controller.isSessionActive ? .red : .accentColor)
+            .disabled(problem != nil && !controller.isSessionActive)
 
             Text("Session length: \(phone.sessionLength.title) — change it in Settings.")
                 .font(.caption)
@@ -79,7 +87,7 @@ struct HomeView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(holding ? Color.red : Color.accentColor)
+                        .fill(holding ? Color.red : (problem == nil ? Color.accentColor : Color.secondary.opacity(0.4)))
                         .frame(width: 110, height: 110)
                     Image(systemName: holding ? "waveform" : "mic.fill")
                         .font(.system(size: 40, weight: .medium))
@@ -88,10 +96,11 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
+            .disabled(problem != nil)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
-                        guard !holding else { return }
+                        guard !holding, problem == nil else { return }
                         holding = true
                         copied = false
                         controller.pushToTalkDown()
@@ -104,7 +113,7 @@ struct HomeView: View {
             )
             .accessibilityLabel("Hold to talk")
 
-            Text(controller.phase.label)
+            Text(problem == nil || controller.phase != .idle ? controller.phase.label : "Not ready")
                 .font(.subheadline)
                 .foregroundStyle(phaseColor)
                 .frame(maxWidth: .infinity)
@@ -144,6 +153,44 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Configuration
+
+    /// Shown instead of letting a recording start that cannot finish. The download bar is
+    /// FluidAudio's byte count for the file it is fetching, not an animation.
+    private func configurationCard(_ problem: SessionController.ConfigurationProblem) -> some View {
+        Card {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Not ready to dictate").font(.headline)
+                    if problem.fix != .wait {
+                        Text(problem.message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    switch problem.fix {
+                    case .systemSettings:
+                        Button("Open iPhone Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                        .buttonStyle(.bordered)
+                    case .loadModel:
+                        Button(problem == .modelNotLoaded ? "Download Parakeet v3" : "Try Again") {
+                            transcriber.prepare()
+                        }
+                        .buttonStyle(.bordered)
+                    case .appSettings:
+                        Button("Open Settings") { controller.selectedTab = .settings }
+                            .buttonStyle(.bordered)
+                    case .wait:
+                        ModelLoadingView(progress: transcriber.progress)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Bits
 
     private func bannerView(_ text: String) -> some View {
@@ -171,6 +218,30 @@ struct HomeView: View {
         .padding()
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
+}
+
+/// The live model-loading line: a determinate bar while bytes are arriving (FluidAudio's
+/// own count for the current file), a spinner for the steps that have no finer progress.
+struct ModelLoadingView: View {
+    let progress: LocalTranscriber.LoadProgress?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if !isDownloading { ProgressView().controlSize(.small) }
+                Text(progress?.label ?? "Loading Parakeet v3…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if isDownloading, let progress {
+                ProgressView(value: progress.downloadFraction)
+                    .progressViewStyle(.linear)
+            }
+        }
+    }
+
+    private var isDownloading: Bool { progress?.stage == .downloading }
 }
 
 /// A plain rounded panel, so the four screens look like one app.

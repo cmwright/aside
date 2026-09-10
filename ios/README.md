@@ -6,8 +6,9 @@ lands at your cursor in whatever app you were typing in.
 An iOS keyboard extension **cannot use the microphone**. That has been true since iOS 8 and
 is still true in iOS 26, with or without Full Access. So the work is split:
 
-- the **app** owns the microphone, runs Parakeet v3 on the phone (or posts to the Worker),
-  runs cleanup on Apple's on-device model (or at the Worker), and applies your dictionary;
+- the **app** owns the microphone, runs Parakeet v3 on the phone (or posts the audio to a
+  provider you chose), runs cleanup on Apple's on-device model (or at a provider), and
+  applies your dictionary;
 - the **keyboard** writes a one-line command into a shared App Group folder, waits for the
   answer, and pastes it.
 
@@ -26,7 +27,7 @@ ios/
 
 Everything platform-neutral is shared with the Mac app by reference, never copied:
 `Log.swift`, `Settings.swift`, `Dictionary.swift`, `DictionaryReplacer.swift`,
-`CleanupPrompt.swift`, `BackendClient.swift`, `AppleCleanup.swift`, `LocalTranscriber.swift`,
+`CleanupPrompt.swift`, `AppleCleanup.swift`, `LocalTranscriber.swift`,
 `Providers.swift`, `APIKeyStore.swift`, `DirectClient.swift` in the app, and `Trigger.swift`
 in the keyboard. See `../mac/Sources`.
 
@@ -38,9 +39,10 @@ cd ios
 ```
 
 That runs `xcodegen generate` and compiles **both** targets for `generic/platform=iOS` with
-`CODE_SIGNING_ALLOWED=NO`. There is no usable iOS simulator runtime on this machine, so
-this compile is the automated verification. It needs a network connection the first time,
-to resolve FluidAudio into `ios/build`.
+`CODE_SIGNING_ALLOWED=NO`; it is the automated verification and needs a network connection
+the first time, to resolve FluidAudio into `ios/build`. To run it in the iOS Simulator
+instead, open the project in Xcode and pick an iPhone simulator as the destination; the App
+Group needs a signed build, so keep automatic signing on.
 
 The protocol tests live in the Mac test target, because they are Foundation-only and a
 simulator is not needed:
@@ -62,25 +64,28 @@ DVT_PLUG_INS_TO_IGNORE=com.apple.dt.IDESimulatorFoundation \
    ```sh
    cd ios && ./build.sh && open Aside.xcodeproj
    ```
-3. **Plug in the iPhone**, unlock it, and pick it in Xcode's run destination menu. Trust the
+3. **Turn on Developer Mode** on the phone (iOS 16 and later): Settings → Privacy &
+   Security → Developer Mode, then restart it when asked. Xcode cannot install anything
+   without it.
+4. **Plug in the iPhone**, unlock it, and pick it in Xcode's run destination menu. Trust the
    computer if the phone asks.
-4. Check both targets in Signing & Capabilities: **Aside** and **AsideKeyboard** should each
+5. Check both targets in Signing & Capabilities: **Aside** and **AsideKeyboard** should each
    show "Automatically manage signing", your team, and the App Group
    `group.com.codywright.aside` with a filled checkbox. Xcode registers the group with Apple
    the first time; if it shows a warning triangle press **Try Again**.
-5. **Press Run.** The app installs and launches.
-6. **Trust the developer certificate** (only with a free Apple ID, and only the first time):
+6. **Press Run.** The app installs and launches.
+7. **Trust the developer certificate** (only with a free Apple ID, and only the first time):
    the phone will refuse to launch with "Untrusted Developer". On the phone go to
    **Settings → General → VPN & Device Management → Developer App →** your Apple ID **→
    Trust**. Then launch Aside again.
-7. **Allow the microphone** when the app asks, and **allow notifications** (they are used
+8. **Allow the microphone** when the app asks, and **allow notifications** (they are used
    for one message: "Aside session ended").
-8. **Enable the keyboard**: on the phone, **Settings → General → Keyboard → Keyboards → Add
+9. **Enable the keyboard**: on the phone, **Settings → General → Keyboard → Keyboards → Add
    New Keyboard… → Aside** (under THIRD-PARTY KEYBOARDS).
-9. **Turn on Full Access**: tap **Aside** in that same Keyboards list and switch on **Allow
+10. **Turn on Full Access**: tap **Aside** in that same Keyboards list and switch on **Allow
    Full Access**, then confirm. Without it the keyboard cannot read the shared folder and
    will say so instead of showing the mic button.
-10. **Start your first session.** Open Aside, press **Start Session**. Now switch to any app
+11. **Start your first session.** Open Aside, press **Start Session**. Now switch to any app
     with a text field, tap and hold the globe key (or tap it) to switch to **Aside**, and
     hold its mic button while you speak. Let go and the text appears.
 
@@ -90,16 +95,18 @@ the status bar.
 
 ## Settings
 
-- **Transcription** — three ways, the same three the Mac app has:
-  *On this iPhone (Parakeet v3)* downloads a ~600 MB CoreML model once and then runs
-  offline on the Neural Engine; *a provider, directly* posts the audio straight to any
-  OpenAI-compatible service with your own API key (the key goes to the keychain, never to
-  `UserDefaults`); *the Worker* posts to your self-hosted backend. The Worker and any
-  local provider need a URL the phone can actually reach — `localhost` is the phone, not
-  your Mac, so use the Mac's LAN address or a deployed Worker.
-- **Cleanup** — level (None / Light / Medium) and engine: a direct provider, Apple's
-  on-device model (needs iOS 26 and Apple Intelligence), or the Worker. The dictionary
+- **Transcription** — *On this iPhone (Parakeet v3)*, the default, downloads a ~600 MB
+  CoreML model once (Home and Settings show the download as it happens, file by file)
+  and then runs offline on the Neural Engine; *a provider, directly* posts the audio
+  straight to any OpenAI-compatible service with your own API key (the key goes to the
+  keychain, never to `UserDefaults`). A provider running on your Mac needs a URL the phone
+  can reach — `localhost` is the phone, not your Mac. The Mac app's Worker option does not
+  exist on the phone.
+- **Cleanup** — level (None / Light / Medium) and engine: Apple's on-device model (the
+  default; needs iOS 26 and Apple Intelligence) or a direct provider. The dictionary
   post-pass always runs in Swift afterwards, exactly as on the Mac.
+- Home refuses to record until the chosen engines can actually run — model downloaded,
+  key present, Apple Intelligence available, microphone allowed — and says what is missing.
 - **Session length** — 5 minutes, 15 minutes, 1 hour, or until you end it. When it expires
   the microphone is released and you get one notification.
 

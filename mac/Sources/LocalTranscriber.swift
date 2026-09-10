@@ -34,6 +34,50 @@ final class LocalTranscriber: ObservableObject {
 
     @Published private(set) var state: State = .notLoaded
 
+    /// What the loader is doing while `state == .loading`, for a status line and a bar.
+    /// Every number comes from FluidAudio's own progress callbacks: bytes received for the
+    /// file being fetched, then the compile step. Nothing here is estimated or animated.
+    struct LoadProgress: Equatable {
+        enum Stage: Equatable {
+            case checking
+            case downloading
+            case compiling
+            case loading(String)
+        }
+
+        var stage: Stage
+        /// 1-based index of the model file being fetched. Parakeet v3 ships as three CoreML
+        /// bundles (fused preprocessor+encoder, decoder, joint).
+        var file: Int = 1
+        /// Bytes received / bytes expected for the current file, 0...1. Only meaningful in
+        /// the `.downloading` stage.
+        var downloadFraction: Double = 0
+        /// FluidAudio's per-file operation fraction as last reported; a value that goes
+        /// backwards means the next file started.
+        var rawFraction: Double = 0
+        /// FluidAudio weights the download phase of each file operation at 0.5 (its
+        /// `ProgressReporter.downloadPhaseWeight`); the compile step is the rest. The bar
+        /// divides that out. If a future version reports byte progress on a 0...1 scale the
+        /// maximum seen tells us so and the divisor becomes 1.
+        var downloadWeight: Double = 0.5
+
+        static let fileCount = 3
+
+        var label: String {
+            switch stage {
+            case .checking: return "Checking Parakeet v3 files…"
+            case .downloading: return "Downloading Parakeet v3, file \(file) of \(LoadProgress.fileCount): \(Int(downloadFraction * 100))%"
+            case .compiling: return "Compiling file \(file) of \(LoadProgress.fileCount) for the Neural Engine…"
+            case .loading(let name): return name.isEmpty ? "Loading Parakeet v3…" : "Loading \(name) onto the Neural Engine…"
+            }
+        }
+    }
+
+    @Published private(set) var progress: LoadProgress?
+
+    /// One line for a status row: the live progress while loading, the state otherwise.
+    var statusLine: String { progress?.label ?? state.label }
+
     private let engine = ParakeetEngine()
     private var loadTask: Task<Void, Never>?
 
@@ -43,16 +87,60 @@ final class LocalTranscriber: ObservableObject {
     func prepare() {
         guard loadTask == nil, state != .ready else { return }
         state = .loading
+        progress = LoadProgress(stage: .checking)
         loadTask = Task { [engine] in
             do {
-                try await engine.load()
+                try await engine.load(
+                    onDownload: { [weak self] report in
+                        Task { @MainActor in self?.noteDownload(report) }
+                    },
+                    onLoad: { [weak self] report in
+                        Task { @MainActor in self?.noteLoad(report) }
+                    })
                 self.state = .ready
             } catch {
                 Log.asr.error("Parakeet load failed: \(error.localizedDescription, privacy: .public)")
                 self.state = .failed(error.localizedDescription)
             }
+            self.progress = nil
             self.loadTask = nil
         }
+    }
+
+    /// `AsrModels.download` runs one FluidAudio operation per model file, and each reports
+    /// its own 0...1 fraction: bytes during the download phase, then the compile step.
+    private func noteDownload(_ report: DownloadProgress) {
+        var next = progress ?? LoadProgress(stage: .checking)
+        if report.fractionCompleted + 0.001 < next.rawFraction {
+            next.file = min(next.file + 1, LoadProgress.fileCount)
+            next.downloadFraction = 0
+        }
+        next.rawFraction = report.fractionCompleted
+        switch report.phase {
+        case .listing:
+            next.stage = .checking
+        case .downloading:
+            next.stage = .downloading
+            if report.fractionCompleted > next.downloadWeight { next.downloadWeight = 1 }
+            next.downloadFraction = min(report.fractionCompleted / next.downloadWeight, 1)
+        case .compiling:
+            next.stage = .compiling
+        }
+        progress = next
+    }
+
+    /// `AsrModels.load` reports which bundle it is handing to Core ML; there is no finer
+    /// progress for that step, so the line names the file and nothing pretends otherwise.
+    private func noteLoad(_ report: DownloadProgress) {
+        var next = progress ?? LoadProgress(stage: .checking)
+        if case .compiling(let name) = report.phase {
+            next.stage = .loading(name.replacingOccurrences(of: ".mlmodelc", with: ""))
+        } else if case .loading = next.stage {
+            // keep the last name
+        } else {
+            next.stage = .loading("")
+        }
+        progress = next
     }
 
     /// Transcribe raw 16 kHz mono Int16 PCM. Loads the model first if needed.
@@ -163,10 +251,13 @@ actor ParakeetEngine {
     private var models: AsrModels?
     private var manager: AsrManager?
 
-    func load() async throws {
+    /// Download (if needed) and load, reporting each step to the two handlers. They are
+    /// called on FluidAudio's queues; the caller hops to the main actor.
+    func load(onDownload: @escaping ProgressHandler, onLoad: @escaping ProgressHandler) async throws {
         if manager != nil { return }
         let started = Date()
-        let models = try await AsrModels.downloadAndLoad(version: .v3)
+        let directory = try await AsrModels.download(version: .v3, progressHandler: onDownload)
+        let models = try await AsrModels.load(from: directory, version: .v3, progressHandler: onLoad)
         let asr = AsrManager(config: .default)
         try await asr.loadModels(models)
         self.models = models
