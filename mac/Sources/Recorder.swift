@@ -167,6 +167,17 @@ final class Recorder {
     private let observerBox = ObserverBox()
     private(set) var isRecording = false
 
+    /// Stopping the engine within a few hundred milliseconds of starting it, while the start
+    /// cue's audio queue is being torn down in the same process, has crashed inside CoreAudio:
+    /// its IO thread called a null callback during `AudioOutputUnitStop` (Aside 0.2.2, macOS
+    /// 26.2). We cannot catch that, so we avoid the pattern: the tap comes off immediately, so
+    /// no audio is kept, and the engine itself winds down a moment later, never sooner than
+    /// `minimumEngineLifetime` after it started.
+    nonisolated static let minimumEngineLifetime: Duration = .seconds(1)
+    nonisolated static let engineStopDelay: Duration = .milliseconds(500)
+    private var engineStartedAt: ContinuousClock.Instant?
+    private var engineStopTask: Task<Void, Never>?
+
     init() {
         observerBox.token = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
@@ -203,6 +214,8 @@ final class Recorder {
         }
 
         sink.reset(listener: listener)
+        engineStopTask?.cancel()
+        engineStopTask = nil
         try installTapAndStart()
         isRecording = true
         Log.audio.info("Recording started")
@@ -222,12 +235,30 @@ final class Recorder {
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
             sink.append(buffer)
         }
+        let wasRunning = engine.isRunning
         engine.prepare()
         do {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
             throw RecorderError.engineFailed(error.localizedDescription)
+        }
+        if !wasRunning { engineStartedAt = .now }
+    }
+
+    /// See `minimumEngineLifetime`. A `start()` before the deadline keeps the engine running.
+    private func stopEngineSoon() {
+        engineStopTask?.cancel()
+        var delay = Recorder.engineStopDelay
+        if let engineStartedAt {
+            delay = max(delay, Recorder.minimumEngineLifetime - engineStartedAt.duration(to: .now))
+        }
+        engineStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, !self.isRecording else { return }
+            self.engine.stop()
+            self.engineStartedAt = nil
+            self.engineStopTask = nil
         }
     }
 
@@ -250,7 +281,7 @@ final class Recorder {
         guard isRecording else { throw RecorderError.tooShort }
         isRecording = false
         engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        stopEngineSoon()
 
         let pcm = sink.take()
         let seconds = WAV.duration(ofPCM16: pcm.count)
@@ -264,7 +295,7 @@ final class Recorder {
         guard isRecording else { return }
         isRecording = false
         engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        stopEngineSoon()
         _ = sink.take()
     }
 }
