@@ -35,6 +35,10 @@ enum TextInserter {
     private static let maxValueScanCharacters = 4096
     /// Virtual key code for "V" on any layout (kVK_ANSI_V).
     private static let virtualKeyV: CGKeyCode = 9
+    /// Longest we wait for the focused app to answer one Accessibility request. The system
+    /// default is several seconds per call, and insertion makes five of them on the main
+    /// thread, so a stalled Electron app used to freeze the menu bar for the duration.
+    static let accessibilityTimeoutSeconds: Float = 1.5
 
     @discardableResult
     static func insert(_ text: String) -> Outcome {
@@ -45,9 +49,15 @@ enum TextInserter {
             ? " " + text
             : text
 
-        if let element = context?.element, setSelectedText(element, payload) {
-            Log.insert.info("Inserted via Accessibility (\(payload.count, privacy: .public) chars)")
-            return .accessibility
+        if let context, setSelectedText(context.element, payload) {
+            // Chromium (Slack, and other Electron apps) reports the attribute as settable and
+            // returns success without inserting anything. Trusting that used to end with
+            // nothing on screen and nothing on the clipboard, so check that the caret moved.
+            if insertLanded(in: context, payload: payload) {
+                Log.insert.info("Inserted via Accessibility (\(payload.count, privacy: .public) chars)")
+                return .accessibility
+            }
+            Log.insert.notice("Accessibility reported success but the selection did not move; pasting instead")
         }
         if pasteViaClipboard(payload) {
             Log.insert.info("Inserted via Cmd+V (\(payload.count, privacy: .public) chars)")
@@ -73,26 +83,58 @@ enum TextInserter {
     private struct FocusContext {
         var element: AXUIElement
         var precedingCharacter: Character?
+        /// The selection before insertion, when the element would tell us. Nil means the
+        /// read-back check cannot run and the app's word is taken for the insertion.
+        var selection: CFRange?
     }
 
     private static func focusedContext() -> FocusContext? {
         guard AXIsProcessTrusted() else { return nil }
         let system = AXUIElementCreateSystemWide()
+        // On the system-wide element this is the timeout for every element we talk to.
+        AXUIElementSetMessagingTimeout(system, accessibilityTimeoutSeconds)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value) == .success,
               let raw = value, CFGetTypeID(raw) == AXUIElementGetTypeID()
         else { return nil }
         let element = raw as! AXUIElement
-        return FocusContext(element: element, precedingCharacter: characterBeforeCursor(in: element))
+        let selection = selectedRange(of: element)
+        return FocusContext(element: element,
+                            precedingCharacter: characterBeforeCursor(in: element, selection: selection),
+                            selection: selection)
     }
 
-    private static func characterBeforeCursor(in element: AXUIElement) -> Character? {
+    private static func selectedRange(of element: AXUIElement) -> CFRange? {
         var rangeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
               let rangeValue = rangeRef, CFGetTypeID(rangeValue) == AXValueGetTypeID()
         else { return nil }
         var range = CFRange(location: 0, length: 0)
-        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range), range.location > 0 else { return nil }
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    /// Did the set actually change the document? Decided from the selection before and
+    /// after: an app that inserted either moved the caret past the new text or left the new
+    /// text selected. An unchanged selection with different text underneath means nothing
+    /// happened, which is Chromium's behaviour.
+    private static func insertLanded(in context: FocusContext, payload: String) -> Bool {
+        guard let before = context.selection else { return true }
+        let after = selectedRange(of: context.element)
+        let inserted = string(in: context.element, range: CFRange(location: before.location, length: payload.utf16.count))
+        return insertLanded(before: before, after: after, insertedText: inserted, payload: payload)
+    }
+
+    /// Pure rule behind `insertLanded(in:payload:)`; tested. Any evidence of movement counts
+    /// as success so that a genuine insertion is never followed by a paste of the same text.
+    nonisolated static func insertLanded(before: CFRange, after: CFRange?, insertedText: String?, payload: String) -> Bool {
+        guard let after else { return true }
+        if after.location != before.location || after.length != before.length { return true }
+        return insertedText == payload
+    }
+
+    private static func characterBeforeCursor(in element: AXUIElement, selection: CFRange?) -> Character? {
+        guard let range = selection, range.location > 0 else { return nil }
 
         // Ask for exactly the one UTF-16 unit in front of the cursor. Copying the whole
         // document over AX IPC — which is what reading kAXValue does — makes every

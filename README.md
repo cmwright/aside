@@ -30,7 +30,7 @@ signing notes are in [`mac/README.md`](mac/README.md).
    Accessibility (System Settings → Privacy & Security → Accessibility, switch Aside on).
    Accessibility is what lets it see the Right Option key and type into other apps. It
    notices the grant by itself; no relaunch needed.
-2. **Pick your engines** in Settings → Transcription. The defaults work with nothing but
+2. **Pick your engines** in Settings → Engines. The defaults work with nothing but
    a Groq key; the fully offline setup needs no key at all.
 
 | Stage | Options | Notes |
@@ -38,14 +38,30 @@ signing notes are in [`mac/README.md`](mac/README.md).
 | Speech to text | **On this Mac** (NVIDIA Parakeet v3 via [FluidAudio](https://github.com/FluidInference/FluidAudio)) · **A provider, directly** (Groq, Fireworks, OpenAI, or any OpenAI-compatible URL) · The Worker | Parakeet downloads about 470 MB once and runs on the Neural Engine while you are still holding the key. Audio never leaves the Mac. |
 | Cleanup | **A provider, directly** (Cerebras, Groq, Fireworks, OpenAI, Ollama, or custom) · **Apple on-device model** (macOS 26 with Apple Intelligence on) · The Worker · None | Cleanup fixes punctuation and capitalization, drops fillers and false starts at the Medium level, and applies your dictionary. It is told never to add content or answer a question that appears in the transcript. |
 
-API keys go in Settings → Direct providers and are stored in your login keychain. The
-**Test** button confirms the key and model. Choosing Parakeet plus the Apple model means
+API keys go in Settings → Providers and are stored in your login keychain. The
+**Test** button confirms the key and model. Everything the app has (General, Engines,
+Providers, Dictionary, Recent Dictations, Permissions) lives in one window with a sidebar. Choosing Parakeet plus the Apple model means
 nothing leaves the machine; choosing Parakeet plus a provider sends only the transcript.
 
 3. **Dictate.** Hold **Right Option**, speak, release. Double-tap it to keep listening
    hands-free, then tap once to stop. A pill near the bottom of the screen shows Listening,
    Transcribing, then the text appears at your cursor. The trigger key is changeable in
    Settings.
+
+If cleanup fails (provider down, rate-limited, no connection) the app retries once and
+then inserts the raw transcript with your dictionary applied, and the pill says so. A
+dictation that takes more than a minute end to end is given up on with a message rather
+than left hanging; **Cancel Dictation** in the menu does the same by hand.
+
+The key is watched through a session event tap. macOS sometimes switches a tap off
+across sleep or when it thinks the process was slow; the app notices, re-enables it, and
+also rebuilds it on every wake, so a dead key after sleep no longer needs a relaunch.
+
+If Right Option still does nothing, open the menu: a line there says when another
+app has turned on secure keyboard entry, which blocks every global key monitor on the
+Mac. A password field does that briefly and is harmless; a login window or terminal
+that keeps it on after the screen unlocks is what wedges the key. Locking and unlocking
+the screen, or quitting that app, releases it.
 
 ## Dictionary
 
@@ -72,10 +88,11 @@ never transcript text. Nothing is sent to us; there is no "us".
 
 ## Insertion
 
-Text is written into the focused field through the Accessibility API. If the app in
-front doesn't support that (some terminals, some Electron apps), Aside pastes instead,
-saving and restoring your clipboard. If both fail, the text is left on the clipboard and
-the pill says so.
+Text is written into the focused field through the Accessibility API, and the cursor is
+read back afterwards to confirm the text actually landed: Chromium-based apps such as
+Slack accept the write and silently drop it. If the app in front doesn't support that
+route (some terminals, some Electron apps), Aside pastes instead, saving and restoring
+your clipboard. If both fail, the text is left on the clipboard and the pill says so.
 
 ## Developing
 

@@ -484,4 +484,53 @@ final class AsideTests: XCTestCase {
     private func le16(_ data: Data, _ offset: Int) -> UInt16 {
         UInt16(data[data.startIndex + offset]) | (UInt16(data[data.startIndex + offset + 1]) << 8)
     }
+
+    // MARK: - Insertion read-back (Slack / Chromium reports success without inserting)
+
+    func testInsertLandedWhenCaretMoved() {
+        let before = CFRange(location: 10, length: 0)
+        XCTAssertTrue(TextInserter.insertLanded(before: before, after: CFRange(location: 15, length: 0), insertedText: nil, payload: "hello"))
+        // Some apps leave the new text selected instead of moving the caret past it.
+        XCTAssertTrue(TextInserter.insertLanded(before: before, after: CFRange(location: 10, length: 5), insertedText: nil, payload: "hello"))
+    }
+
+    func testInsertNotLandedWhenSelectionUnchangedAndTextDiffers() {
+        let before = CFRange(location: 10, length: 0)
+        XCTAssertFalse(TextInserter.insertLanded(before: before, after: before, insertedText: "", payload: "hello"))
+        XCTAssertFalse(TextInserter.insertLanded(before: before, after: before, insertedText: nil, payload: "hello"))
+    }
+
+    func testInsertLandedWhenTextIsThereEvenIfSelectionUnchanged() {
+        let before = CFRange(location: 10, length: 5)
+        XCTAssertTrue(TextInserter.insertLanded(before: before, after: before, insertedText: "hello", payload: "hello"))
+    }
+
+    func testInsertAssumedLandedWhenReadBackImpossible() {
+        // No selection after the set: the element may have been replaced. Never double-insert.
+        XCTAssertTrue(TextInserter.insertLanded(before: CFRange(location: 3, length: 0), after: nil, insertedText: nil, payload: "x"))
+    }
+
+    // MARK: - Cleanup retry classification
+
+    func testTransientCleanupErrors() {
+        XCTAssertTrue(AppController.isTransientCleanupError(DirectError.transport("timed out")))
+        XCTAssertTrue(AppController.isTransientCleanupError(DirectError.http(provider: "Groq", status: 503, message: "overloaded")))
+        XCTAssertTrue(AppController.isTransientCleanupError(DirectError.http(provider: "Groq", status: 429, message: "slow down")))
+        XCTAssertTrue(AppController.isTransientCleanupError(BackendError.http(status: 502, message: "")))
+        XCTAssertTrue(AppController.isTransientCleanupError(URLError(.networkConnectionLost)))
+        XCTAssertFalse(AppController.isTransientCleanupError(DirectError.http(provider: "Groq", status: 401, message: "bad key")))
+        XCTAssertFalse(AppController.isTransientCleanupError(DirectError.missingKey("Groq")))
+        XCTAssertFalse(AppController.isTransientCleanupError(DirectError.badResponse("a message")))
+    }
+
+    func testShortCleanupFailureIsShort() {
+        XCTAssertEqual(AppController.shortCleanupFailure(DirectError.http(provider: "Groq", status: 503, message: "x")), "Groq 503")
+        XCTAssertEqual(AppController.shortCleanupFailure(DirectError.transport("x")), "no connection")
+        XCTAssertEqual(AppController.shortCleanupFailure(DirectError.missingKey("Groq")), "no Groq key")
+    }
+
+    func testSecureInputProbeDoesNotCrash() {
+        // Only checks the call path; whether secure input is on depends on the test host.
+        _ = AppController.secureInputHolderName()
+    }
 }

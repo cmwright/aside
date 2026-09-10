@@ -1,10 +1,9 @@
 import KeyboardShortcuts
 import SwiftUI
 
-struct SettingsView: View {
+/// API keys and endpoints: the direct providers and the optional Worker.
+struct ProvidersSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
-    @ObservedObject private var localTranscriber = LocalTranscriber.shared
-    @ObservedObject private var appleCleanup = AppleCleanup.shared
     @State private var healthResult: String?
     @State private var checking = false
     @State private var chatKey = ""
@@ -56,7 +55,19 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+        .formStyle(.grouped)
+    }
+}
 
+/// Which engine transcribes and which one cleans up.
+struct EnginesSettingsView: View {
+    @EnvironmentObject private var settings: AppSettings
+    @ObservedObject private var localTranscriber = LocalTranscriber.shared
+    @ObservedObject private var appleCleanup = AppleCleanup.shared
+
+    var body: some View {
+        Form {
             Section("Transcription") {
                 Picker("Engine", selection: $settings.transcriptionMode) {
                     ForEach(TranscriptionMode.allCases) { mode in
@@ -110,7 +121,17 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .formStyle(.grouped)
+    }
+}
 
+/// The trigger, sounds and updates.
+struct GeneralSettingsView: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Form {
             Section("Trigger") {
                 Toggle("Hold Right Option to talk", isOn: $settings.holdRightOption)
                 Text("Hold the key, speak, let go. Needs Accessibility permission.")
@@ -131,10 +152,24 @@ struct SettingsView: View {
             Section("Feedback") {
                 Toggle("Play a sound on start and stop", isOn: $settings.playSounds)
             }
+
+            Section("Updates") {
+                HStack {
+                    Text("Aside \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Check for Updates…") { AppDelegate.updater.checkForUpdates(nil) }
+                }
+                Text("Checks once a day on its own.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
+}
 
+extension ProvidersSettingsView {
     @ViewBuilder
     private func directProviderRows(
         title: String, presets: [ProviderPreset], providerID: Binding<String>, baseURL: Binding<String>,

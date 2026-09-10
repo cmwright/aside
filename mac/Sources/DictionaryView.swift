@@ -36,7 +36,7 @@ struct DictionaryView: View {
                     TableRow($entry)
                 }
             }
-            .frame(minHeight: 160)
+            .frame(minHeight: 160, idealHeight: 280, maxHeight: .infinity)
 
             HStack {
                 Button {

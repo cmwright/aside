@@ -8,7 +8,7 @@ enum DirectError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingKey(let provider): return "Add an API key for \(provider) in Settings → Direct providers."
+        case .missingKey(let provider): return "Add an API key for \(provider) in Settings → Providers."
         case .http(let provider, let status, let message): return "\(provider) returned \(status): \(message)"
         case .transport(let message): return "Could not reach the provider: \(message)"
         case .badResponse(let what): return "Provider response did not contain \(what)."

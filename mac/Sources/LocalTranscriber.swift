@@ -97,7 +97,7 @@ enum LocalTranscriberError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .modelUnavailable(let message):
-            return "On-device model unavailable: \(message). Switch Transcription to Cloud in Settings or retry."
+            return "On-device model unavailable: \(message). Pick another engine in Settings → Engines or retry."
         }
     }
 }

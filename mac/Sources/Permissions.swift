@@ -38,7 +38,6 @@ final class Permissions: ObservableObject {
 
     private var timer: Timer?
     private var watchers = 0
-    private var window: NSWindow?
 
     private init() {
         refresh()
@@ -90,45 +89,6 @@ final class Permissions: ObservableObject {
     func endWatching() {
         watchers = max(0, watchers - 1)
         updateTimer()
-    }
-
-    // MARK: - Window
-
-    /// The Permissions checklist lives in an AppKit window instead of a SwiftUI `Window`
-    /// scene so that `AppDelegate` can open it on first launch, where SwiftUI's
-    /// `openWindow` environment value is not reachable.
-    func showWindow() {
-        let window = self.window ?? makeWindow()
-        self.window = window
-        let wasVisible = window.isVisible
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        // One watcher per *open*, balanced by `windowWillClose`.
-        if !wasVisible { beginWatching() }
-    }
-
-    private func makeWindow() -> NSWindow {
-        let controller = NSHostingController(rootView: PermissionsView().environmentObject(self))
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Permissions"
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 460, height: 400))
-        window.isReleasedWhenClosed = false
-        window.center()
-        window.delegate = windowDelegate
-        return window
-    }
-
-    /// Balances the `beginWatching()` in `showWindow()` when the window is closed, so the
-    /// poll can stop once everything is granted.
-    private lazy var windowDelegate = WindowDelegate(owner: self)
-
-    private final class WindowDelegate: NSObject, NSWindowDelegate {
-        private weak var owner: Permissions?
-        init(owner: Permissions) { self.owner = owner }
-        func windowWillClose(_ notification: Notification) {
-            MainActor.assumeIsolated { owner?.endWatching() }
-        }
     }
 
     func requestMicrophone() {

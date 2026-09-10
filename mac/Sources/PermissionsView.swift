@@ -43,9 +43,10 @@ struct PermissionsView: View {
             }
         }
         .padding(20)
-        // The window's owner (`Permissions.showWindow`) starts and stops the 1 s poll;
-        // this only makes sure the rows are current the moment the window appears.
-        .onAppear { permissions.refresh() }
+        .frame(maxWidth: 560, alignment: .leading)
+        // Poll while visible so the rows flip to Granted on their own.
+        .onAppear { permissions.beginWatching() }
+        .onDisappear { permissions.endWatching() }
     }
 
     @ViewBuilder
