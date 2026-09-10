@@ -29,7 +29,8 @@ ios/
   Shared/AsideIPC.swift    the hand-off protocol, unit-tested from the Mac test target
   App/               the app: session engine, recorder, pipeline, four screens
   Keyboard/          the keyboard extension: status line, mic button, four keys
-  Control/           the Control Center toggle (a WidgetKit control + one App Intent)
+  Control/           the Control Center toggle (a WidgetKit control)
+  Intents/           its App Intent, compiled into both the app and the control
   Tests/             AsideIPCTests.swift (runs in the Mac test target — see below)
 ```
 

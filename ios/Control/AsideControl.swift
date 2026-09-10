@@ -16,10 +16,13 @@ import WidgetKit
 @main
 struct AsideControlBundle: WidgetBundle {
     var body: some Widget {
-        DictationControl()
+        if #available(iOS 26.0, *) {
+            DictationControl()
+        }
     }
 }
 
+@available(iOS 26.0, *)
 struct DictationControl: ControlWidget {
     static let kind = "com.codywright.aside.ios.control.dictation"
 
@@ -45,30 +48,5 @@ struct DictationControlProvider: ControlValueProvider {
     func currentValue() async throws -> Bool {
         guard let store = AsideIPCStore.appGroup() else { return false }
         return store.activeSession() != nil && (store.readControlState()?.recording ?? false)
-    }
-}
-
-struct ToggleDictationIntent: SetValueIntent {
-    static let title: LocalizedStringResource = "Aside Dictation"
-    static let description = IntentDescription(
-        "Starts a dictation in Aside, or stops the one in progress and copies the text to the clipboard.")
-
-    /// Background by default; the app is only brought forward when a session has to be
-    /// started, because iOS will not let a backgrounded app begin recording.
-    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
-
-    @Parameter(title: "Recording")
-    var value: Bool
-
-    func perform() async throws -> some IntentResult {
-        guard let store = AsideIPCStore.appGroup() else { throw AsideIPCError.noContainer }
-        try store.writeCommand(DictationCommand(action: value ? .start : .stop, source: .control))
-        DarwinNotifier.post(AsideIPC.commandNotification)
-        if value, store.activeSession() == nil, systemContext.currentMode.canContinueInForeground {
-            // No session, so the app is not running with the microphone. Open it: on
-            // becoming active it starts a session and adopts the command just written.
-            try await continueInForeground(alwaysConfirm: false)
-        }
-        return .result()
     }
 }

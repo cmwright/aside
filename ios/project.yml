@@ -48,6 +48,8 @@ targets:
         excludes:
           - Info.plist
       - path: Shared
+      # The Control Center intent, compiled into the app as well as the control extension.
+      - path: Intents
       # Shared with the Mac app by reference, never copied. See PLAN-iOS.md.
       - path: ../mac/Sources/Log.swift
       - path: ../mac/Sources/Settings.swift
@@ -154,6 +156,7 @@ targets:
         excludes:
           - Info.plist
       - path: Shared
+      - path: Intents
     entitlements:
       path: AsideControl.entitlements
       properties:
