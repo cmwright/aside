@@ -23,11 +23,13 @@ func drawGlyph(in rect: NSRect, color: NSColor) {
 }
 
 let px = 1024
-let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
-                           samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
-                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+// An opaque sRGB CoreGraphics context: App Store icons may not have an alpha channel, and
+// an NSBitmapImageRep without alpha does not draw reliably through NSGraphicsContext.
+let cg = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
+                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
 NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: false)
 let canvas = NSRect(x: 0, y: 0, width: px, height: px)
 let gradient = NSGradient(starting: NSColor(calibratedRed: 0.20, green: 0.16, blue: 0.55, alpha: 1),
                           ending: NSColor(calibratedRed: 0.45, green: 0.30, blue: 0.85, alpha: 1))!
@@ -36,6 +38,7 @@ let g = CGFloat(px) * 0.58
 let glyphRect = NSRect(x: canvas.midX - g / 2 + g * 0.02, y: canvas.midY - g / 2, width: g, height: g)
 drawGlyph(in: glyphRect, color: .white)
 NSGraphicsContext.restoreGraphicsState()
+let rep = NSBitmapImageRep(cgImage: cg.makeImage()!)
 let out = "App/Assets.xcassets/AppIcon.appiconset/icon-1024.png"
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
 print("Wrote \(out)")
