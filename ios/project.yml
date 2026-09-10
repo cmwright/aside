@@ -196,6 +196,21 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
+  # Simulator-only: drives Safari + the Aside keyboard to check the keyboard can open the
+  # app. Run with: xcodebuild test -scheme Aside -only-testing:AsideUITests -destination ...
+  AsideUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Aside
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.ios.uitests
+        TEST_TARGET_NAME: Aside
+        GENERATE_INFOPLIST_FILE: "YES"
+
 schemes:
   Aside:
     build:
@@ -203,7 +218,12 @@ schemes:
         Aside: all
         AsideKeyboard: all
         AsideControl: all
+        AsideUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - AsideUITests
     archive:
       config: Release

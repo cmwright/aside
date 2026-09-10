@@ -32,6 +32,7 @@ ios/
   Control/           the Control Center toggle (a WidgetKit control)
   Intents/           its App Intent, compiled into both the app and the control
   Tests/             AsideIPCTests.swift (runs in the Mac test target — see below)
+  UITests/           simulator UI test: the keyboard's "Start a session" opens the app
 ```
 
 Everything platform-neutral is shared with the Mac app by reference, never copied:
@@ -52,6 +53,25 @@ That runs `xcodegen generate` and compiles **both** targets for `generic/platfor
 the first time, to resolve FluidAudio into `ios/build`. To run it in the iOS Simulator
 instead, open the project in Xcode and pick an iPhone simulator as the destination; the App
 Group needs a signed build, so keep automatic signing on.
+
+The one UI test drives Safari and the Aside keyboard on a simulator and checks that
+"Start a session" really opens the app. It needs a simulator where the keyboard is added
+under Settings > General > Keyboard > Keyboards (it switches Full Access on by itself),
+and the app must be installed from a signed build, or the App Group container never
+exists and the keyboard can only show "Turn on Allow Full Access":
+
+```sh
+cd ios
+xcodebuild build-for-testing -project Aside.xcodeproj -scheme Aside \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath build
+xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/Aside.app
+xcodebuild test-without-building -project Aside.xcodeproj -scheme Aside \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -derivedDataPath build
+```
+
+The explicit `simctl install` matters: `xcodebuild test` does not always replace an app
+that is already installed. When the link does nothing, the keyboard leaves its last
+attempts in `keyboard-trace.txt` in the App Group container.
 
 The protocol tests live in the Mac test target, because they are Foundation-only and a
 simulator is not needed:

@@ -62,4 +62,55 @@ final class KeyboardViewController: UIInputViewController {
     func advanceToNextKeyboard() {
         advanceToNextInputMode()
     }
+
+    /// Opens the container app. `UIApplication.shared` is marked unavailable in extensions,
+    /// but the extension process still has one, and its
+    /// `openURL:options:completionHandler:` is what opens the app on iOS 18 and later
+    /// (the old `openURL:` selector walked up the responder chain stopped working there;
+    /// `NSExtensionContext.open` reports false for keyboards; a scene's own `openURL`
+    /// swallows it). Verified end to end by `AsideUITests`. If no such object turns up,
+    /// the responder chain is tried as a fallback.
+    @discardableResult
+    func openContainerApp(_ url: URL) -> Bool {
+        let selector = NSSelectorFromString("openURL:options:completionHandler:")
+        typealias OpenURL = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
+        let completion: @convention(block) (Bool) -> Void = { ok in
+            KeyboardTrace.write("open \(url.absoluteString) -> \(ok)")
+        }
+
+        var target: NSObject?
+        if let appClass = NSClassFromString("UIApplication") as? NSObject.Type,
+           let shared = appClass.perform(NSSelectorFromString("sharedApplication"))?.takeUnretainedValue() as? NSObject,
+           shared.responds(to: selector) {
+            target = shared
+        } else {
+            var responder: UIResponder? = next
+            while let current = responder {
+                if current.responds(to: selector) { target = current; break }
+                responder = current.next
+            }
+        }
+        guard let target else {
+            KeyboardTrace.write("nothing in this process answers openURL:options:completionHandler:")
+            return false
+        }
+        KeyboardTrace.write("opening \(url.absoluteString) through \(type(of: target))")
+        let open = unsafeBitCast(target.method(for: selector), to: OpenURL.self)
+        open(target, selector, url as NSURL, [:] as NSDictionary, unsafeBitCast(completion, to: AnyObject.self))
+        return true
+    }
+}
+
+/// A few lines in the App Group describing the last attempts to open the app, so a tap
+/// that does nothing can be diagnosed from the app side (the keyboard's own log is hard
+/// to reach). Capped at twenty lines.
+enum KeyboardTrace {
+    static func write(_ line: String) {
+        guard let root = AsideIPC.containerURL() else { return }
+        let url = root.appendingPathComponent("keyboard-trace.txt")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let lines = (existing.split(separator: "\n").suffix(19) + ["\(stamp) \(line)"]).joined(separator: "\n")
+        try? lines.write(to: url, atomically: true, encoding: .utf8)
+    }
 }

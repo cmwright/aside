@@ -10,6 +10,9 @@ final class KeyboardModel: ObservableObject {
     enum State: Equatable {
         /// Without Full Access the App Group is not even readable.
         case noFullAccess
+        /// Full Access is on but the App Group container is missing: the build was
+        /// installed without its entitlements (an unsigned simulator build, typically).
+        case noAppGroup
         case noSession
         case ready
         case listening
@@ -19,6 +22,7 @@ final class KeyboardModel: ObservableObject {
         var text: String {
             switch self {
             case .noFullAccess: return "Turn on Allow Full Access"
+            case .noAppGroup: return "Can't reach the Aside app"
             case .noSession: return "Start a session"
             case .ready: return "Ready"
             case .listening: return "Listening…"
@@ -64,16 +68,22 @@ final class KeyboardModel: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
-        guard controller?.hasFullAccess == true else {
+        // The real question is whether the App Group container can be written, which is
+        // what Full Access grants. `hasFullAccess` alone is not trusted: on the simulator
+        // it stays false with the switch on.
+        let store = AsideIPCStore.appGroup()
+        guard let store, store.isWritable else {
             ipc = nil
-            state = .noFullAccess
+            if store == nil, controller?.hasFullAccess == true {
+                KeyboardModel.log.error("keyboard: App Group container unavailable")
+                state = .noAppGroup
+            } else {
+                KeyboardModel.log.notice("keyboard: no Full Access")
+                state = .noFullAccess
+            }
             return
         }
-        ipc = AsideIPCStore.appGroup()
-        guard ipc != nil else {
-            state = .noFullAccess
-            return
-        }
+        ipc = store
         resultObserver = DarwinObserver(name: AsideIPC.resultNotification) { [weak self] in
             Task { @MainActor in self?.tick() }
         }
@@ -296,6 +306,12 @@ final class KeyboardModel: ObservableObject {
         guard !text.isEmpty, let proxy = controller?.textDocumentProxy else { return }
         let context = AsideIPC.trimContext(proxy.documentContextBeforeInput)
         proxy.insertText(AsideIPC.needsLeadingSpace(contextBefore: context, text: text) ? " " + text : text)
+    }
+
+    /// The "Start a session" link and the grey mic.
+    @discardableResult
+    func openApp(_ url: URL) -> Bool {
+        controller?.openContainerApp(url) ?? false
     }
 
     func nextKeyboard() {

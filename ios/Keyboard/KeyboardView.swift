@@ -10,7 +10,7 @@ struct KeyboardRootView: View {
         VStack(spacing: 8) {
             statusLine
             Spacer(minLength: 0)
-            if model.state == .noFullAccess {
+            if model.state == .noFullAccess || model.state == .noAppGroup {
                 fullAccessHelp
             } else {
                 micButton
@@ -32,13 +32,16 @@ struct KeyboardRootView: View {
                 .foregroundStyle(.secondary)
             Text("·").foregroundStyle(.tertiary)
             if model.state.isTappableForSession {
-                // A SwiftUI Link is the one thing a keyboard extension can still use to
-                // open its app: iOS 18 shut the old responder-chain `openURL:` route.
-                Link(destination: KeyboardModel.startSessionURL) {
-                    Label("Start a session", systemImage: "arrow.up.forward.app")
-                        .font(.caption.weight(.semibold))
-                }
-                .foregroundStyle(Color.accentColor)
+                // Not a Button or Link: like the keys below, a plain gesture is what
+                // reliably gets touches inside a keyboard extension.
+                Label("Start a session", systemImage: "arrow.up.forward.app")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0).onEnded { _ in
+                        model.openApp(KeyboardModel.startSessionURL)
+                    })
+                    .accessibilityAddTraits(.isButton)
             } else {
                 Text(model.state.text)
                     .font(.caption)
@@ -53,7 +56,7 @@ struct KeyboardRootView: View {
 
     private var statusColor: Color {
         switch model.state {
-        case .error, .noFullAccess: return .red
+        case .error, .noFullAccess, .noAppGroup: return .red
         case .listening: return .red
         case .transcribing: return .orange
         default: return .secondary
@@ -66,7 +69,11 @@ struct KeyboardRootView: View {
         VStack(spacing: 4) {
             if model.state.isTappableForSession {
                 // No session yet: the mic itself opens the app to start one.
-                Link(destination: KeyboardModel.startSessionURL) { micFace }
+                micFace
+                    .gesture(DragGesture(minimumDistance: 0).onEnded { _ in
+                        model.openApp(KeyboardModel.startSessionURL)
+                    })
+                    .accessibilityAddTraits(.isButton)
                     .accessibilityLabel("Open Aside to start a session")
             } else {
                 micFace
@@ -123,7 +130,9 @@ struct KeyboardRootView: View {
     }
 
     private var fullAccessHelp: some View {
-        Text("Turn on Allow Full Access in Settings > General > Keyboard > Keyboards > Aside. Aside needs it to reach the app that does the recording.")
+        Text(model.state == .noAppGroup
+             ? "This copy of the keyboard has no App Group entitlement, so it cannot reach the Aside app. Reinstall a signed build."
+             : "Turn on Allow Full Access in Settings > General > Keyboard > Keyboards > Aside. Aside needs it to reach the app that does the recording.")
             .font(.caption)
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)

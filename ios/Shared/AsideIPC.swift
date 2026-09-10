@@ -234,6 +234,22 @@ struct AsideIPCStore: Sendable {
 
     // MARK: Session
 
+    /// Whether this process can actually write into the container. A keyboard extension
+    /// without Full Access gets a container URL from the system and then has every write
+    /// refused, and `hasFullAccess` itself is unreliable on the simulator, so the probe is
+    /// the test that matters.
+    var isWritable: Bool {
+        let probe = root.appendingPathComponent(".probe-\(ProcessInfo.processInfo.processIdentifier)")
+        defer { try? fileManager.removeItem(at: probe) }
+        do {
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data().write(to: probe, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func writeSession(_ session: SessionState) throws {
         try write(session, to: sessionURL)
     }
