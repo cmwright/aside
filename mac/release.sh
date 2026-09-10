@@ -96,17 +96,20 @@ spctl -a -vv -t exec "$APP"
 echo "== Appcast (Sparkle)"
 # generate_appcast signs the zip with the EdDSA private key in this machine's keychain
 # (created once with Sparkle's generate_keys; the public half is SUPublicEDKey in
-# project.yml) and writes appcast.xml next to it. Older zips in the folder become
-# earlier entries, so keep build/releases around if you want a version history.
+# project.yml) and writes appcast.xml next to it. Only the current zip is kept in the
+# folder: every entry gets the same download prefix, so an older zip would be listed
+# under the wrong release tag, and deltas are off because the .delta files are never
+# uploaded (Sparkle falls back to the full zip on a 404, but noisily).
 RELEASES="$DERIVED/releases"
 mkdir -p "$RELEASES"
+rm -f "$RELEASES"/*.zip "$RELEASES"/*.delta "$RELEASES"/appcast.xml
 cp "$ZIP" "$RELEASES/"
 GENERATE_APPCAST="$(find "$DERIVED/SourcePackages/artifacts" -type f -name generate_appcast | head -n 1)"
 "$GENERATE_APPCAST" \
+  --maximum-deltas 0 \
   --download-url-prefix "https://github.com/cmwright/aside/releases/download/v$VERSION/" \
   --link "https://github.com/cmwright/aside/releases" \
   "$RELEASES"
-rm -f "$RELEASES"/*.delta
 
 echo ""
 echo "Release: $RELEASES/Aside-$VERSION.zip"
