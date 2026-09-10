@@ -35,3 +35,4 @@ mac/.build/
 # Personal signing config (team id, identities); see the .example files next to them
 mac/Signing.xcconfig
 ios/Signing.xcconfig
+ios/build-device/

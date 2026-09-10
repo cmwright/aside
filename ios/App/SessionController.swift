@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
+import WidgetKit
 
 /// One finished dictation, kept in memory so the raw speech-model output can be compared
 /// with the text after cleanup. Nothing is written to disk: transcripts stay in the
@@ -52,10 +54,20 @@ final class SessionController: ObservableObject {
         }
     }
 
-    /// Where a dictation came from, which decides whether a result file is written.
+    /// Where a dictation came from, which decides where the text goes: a result file for
+    /// the keyboard, the clipboard for the Control Center control, the screen for the app.
     private enum Origin: Equatable {
         case keyboard(UUID)
+        case control(UUID)
         case app
+
+        var name: String {
+            switch self {
+            case .keyboard: return "keyboard"
+            case .control: return "control"
+            case .app: return "app"
+            }
+        }
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -78,9 +90,17 @@ final class SessionController: ObservableObject {
     private var expiryTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var current: Origin?
+    private var lastControlRecording = false
 
     /// A dictation longer than this is stopped and processed anyway.
     private static let watchdogSeconds: UInt64 = 90
+
+    /// A control command older than this when the app finally sees it is a leftover from a
+    /// tap whose app launch never happened, not a request to start recording now. Two
+    /// minutes leaves room for a cold launch that still has to load Parakeet.
+    private static let controlCommandMaxAge: TimeInterval = 120
+
+    private var modelWaitTask: Task<Void, Never>?
 
     init(settings: AppSettings? = nil, dictionary: DictionaryStore? = nil, phone: PhoneSettings? = nil) {
         self.settings = settings ?? AppSettings(defaults: AppGroupStorage.defaults)
@@ -213,7 +233,15 @@ final class SessionController: ObservableObject {
     func startSession() {
         guard !isSessionActive else { return }
         if let problem = configurationProblem() {
-            phase = .failed(problem.message)
+            if problem == .modelLoading {
+                // A cold launch from the keyboard or the control lands here while Parakeet
+                // is still loading. Rather than fail, start the session the moment it is
+                // ready; any command the extension left behind is then picked up as usual.
+                banner = "Starting a session as soon as Parakeet v3 finishes loading."
+                afterModelLoads { [weak self] in self?.startSession() }
+            } else {
+                phase = .failed(problem.message)
+            }
             return
         }
         ipc.purge()
@@ -243,7 +271,21 @@ final class SessionController: ObservableObject {
         Log.app.notice("Session started, expires \(expiresAt?.description ?? "never", privacy: .public)")
     }
 
+    /// Runs `action` once the local model is no longer loading (ready or failed).
+    private func afterModelLoads(_ action: @escaping @MainActor () -> Void) {
+        modelWaitTask?.cancel()
+        modelWaitTask = Task { @MainActor [weak self] in
+            while LocalTranscriber.shared.state == .loading, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            guard !Task.isCancelled, self != nil else { return }
+            action()
+        }
+    }
+
     func endSession(expired: Bool = false) {
+        modelWaitTask?.cancel()
+        modelWaitTask = nil
         expiryTask?.cancel()
         expiryTask = nil
         stopWatchingCommands()
@@ -252,6 +294,7 @@ final class SessionController: ObservableObject {
         try? ipc.endSession()
         session = ipc.readSession()
         phase = .idle
+        syncControl()
         DarwinNotifier.post(AsideIPC.resultNotification)
         if expired {
             banner = "Session ended."
@@ -260,19 +303,25 @@ final class SessionController: ObservableObject {
         Log.app.notice("Session ended\(expired ? " (expired)" : "", privacy: .public)")
     }
 
-    /// Called from `aside://session/start`, which the keyboard opens.
+    /// Called from `aside://session/start`, which the keyboard opens, and from
+    /// `aside://control/start`, which the Control Center control opens when no session
+    /// was running to take its command.
     func handle(url: URL) {
         guard url.scheme?.lowercased() == "aside" else { return }
         let path = (url.host.map { [$0] } ?? []) + url.pathComponents.filter { $0 != "/" }
-        guard path.first == "session" else { return }
-        switch path.dropFirst().first {
-        case "start":
+        switch (path.first, path.dropFirst().first) {
+        case ("session", "start"):
             if !isSessionActive { startSession() }
             banner = isSessionActive
                 ? "Session started. Go back to your app and switch to the Aside keyboard."
                 : "Could not start a session. \(phase.label)"
-        case "end":
+        case ("session", "end"):
             endSession()
+        case ("control", "start"):
+            adoptControlCommands()
+            banner = isSessionActive
+                ? "Listening. Tap the Aside control again (or the button below) to stop; the text is copied for you to paste."
+                : "Could not start a session. \(phase.label)"
         default:
             break
         }
@@ -284,6 +333,35 @@ final class SessionController: ObservableObject {
         if let session, session.active, !AsideIPC.isActive(session, at: Date()) {
             endSession(expired: true)
         }
+        adoptControlCommands()
+    }
+
+    /// The Control Center toggle can be tapped with no session running. It writes its
+    /// `start` command anyway and opens the app; this is the app taking that command:
+    /// start a session, then let the normal command path begin the dictation.
+    private func adoptControlCommands() {
+        let now = Date()
+        let pending = ipc.pendingCommands().filter(\.isFromControl)
+        guard !pending.isEmpty else { return }
+        let stale = pending.filter { now.timeIntervalSince($0.at) > SessionController.controlCommandMaxAge }
+        stale.forEach { ipc.removeCommand(id: $0.id) }
+        let fresh = pending.filter { now.timeIntervalSince($0.at) <= SessionController.controlCommandMaxAge }
+        guard !fresh.isEmpty else { return }
+        if !isSessionActive {
+            guard fresh.contains(where: { $0.action == .start }) else {
+                fresh.forEach { ipc.removeCommand(id: $0.id) }
+                return
+            }
+            startSession()
+            guard isSessionActive else {
+                // Deferred behind the model load: the commands stay for that retry.
+                if configurationProblem() != .modelLoading {
+                    fresh.forEach { ipc.removeCommand(id: $0.id) }
+                }
+                return
+            }
+        }
+        drainCommands()
     }
 
     private func scheduleExpiry(at date: Date?) {
@@ -349,7 +427,7 @@ final class SessionController: ObservableObject {
     private func handle(_ command: DictationCommand) {
         switch command.action {
         case .start:
-            beginDictation(origin: .keyboard(command.id))
+            beginDictation(origin: command.isFromControl ? .control(command.id) : .keyboard(command.id))
         case .stop:
             endDictationAndProcess()
         case .cancel:
@@ -398,6 +476,7 @@ final class SessionController: ObservableObject {
         }
         retimePolling()
         startWatchdog()
+        syncControl()
     }
 
     private func endDictationAndProcess() {
@@ -414,6 +493,7 @@ final class SessionController: ObservableObject {
         if case .keyboard(let id) = origin {
             publish(DictationResult(id: id, status: .processing))
         }
+        syncControl()
         let plan = cleanupPlan()
         Task { @MainActor in
             await self.run(audio: audio, plan: plan, origin: origin)
@@ -428,6 +508,7 @@ final class SessionController: ObservableObject {
         if hadKeyboardResult { DarwinNotifier.post(AsideIPC.resultNotification) }
         phase = .idle
         retimePolling()
+        syncControl()
         idleIfStandalone()
     }
 
@@ -579,8 +660,13 @@ final class SessionController: ObservableObject {
                                     engine: engineName, cleanup: cleanupLabel,
                                     sttMs: sttMs, cleanupMs: cleanupMs))
         }
+        if case .control = origin {
+            copyToClipboard(final)
+            notify(title: "Copied to clipboard", body: final)
+        }
+        syncControl()
         RecentDictations.shared.add(DictationRecord(
-            date: Date(), engine: engine, source: origin == .app ? "app" : "keyboard",
+            date: Date(), engine: engine, source: origin.name,
             rawText: raw, finalText: final, sttMs: sttMs, cleanupMs: cleanupMs, cleanupLabel: cleanupLabel))
         lastSummary = "Last: \(engineDescription(engine)), speech \(sttMs) ms"
             + (cleanupMs > 0 ? ", cleanup \(cleanupMs) ms" : ", no cleanup call")
@@ -599,6 +685,10 @@ final class SessionController: ObservableObject {
         if case .keyboard(let id) = origin {
             publish(DictationResult(id: id, status: .failed, error: message))
         }
+        if case .control = origin {
+            notify(title: "Aside could not transcribe", body: message)
+        }
+        syncControl()
         Log.app.error("\(message, privacy: .public)")
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(5))
@@ -631,6 +721,31 @@ final class SessionController: ObservableObject {
         recorder.stopSession()
     }
 
+    // MARK: - Control Center
+
+    /// Keeps `control.json` and the toggle in Control Center in step with what is really
+    /// happening: on only while a control-started dictation is being recorded.
+    private func syncControl() {
+        var recording = false
+        if case .control = current, phase == .listening { recording = true }
+        guard recording != lastControlRecording || ipc.readControlState() == nil else { return }
+        lastControlRecording = recording
+        try? ipc.writeControlState(ControlState(recording: recording))
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadAllControls()
+        }
+    }
+
+    /// The control's delivery. iOS clears the clipboard at the expiry on its own, and the
+    /// text is not marked local-only, so Universal Clipboard carries it to a nearby Mac.
+    private func copyToClipboard(_ text: String) {
+        var options: [UIPasteboard.OptionsKey: Any] = [:]
+        if let seconds = phone.clipboardExpiry.seconds {
+            options[.expirationDate] = Date().addingTimeInterval(seconds)
+        }
+        UIPasteboard.general.setItems([[UTType.plainText.identifier: text]], options: options)
+    }
+
     // MARK: - Notifications
 
     private func askForNotificationsOnce() {
@@ -642,11 +757,16 @@ final class SessionController: ObservableObject {
     }
 
     private func notifyExpired() {
+        notify(identifier: "aside.session.expired", title: "Aside session ended", body: "Open Aside to start another one.")
+    }
+
+    /// Shown when the user is in another app; iOS suppresses it while Aside is in front,
+    /// where the result card already says the same thing.
+    private func notify(identifier: String = "aside.dictation", title: String, body: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Aside session ended"
-        content.body = "Open Aside to start another one."
-        let request = UNNotificationRequest(identifier: "aside.session.expired", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        content.title = title
+        content.body = body.count > 300 ? String(body.prefix(300)) + "…" : body
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 }
 

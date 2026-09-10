@@ -61,6 +61,32 @@ enum SessionLength: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// How long text put on the clipboard by a Control Center dictation stays there. iOS clears
+/// it itself at the deadline; nothing in the app has to be running.
+enum ClipboardExpiry: String, CaseIterable, Identifiable, Sendable {
+    case fiveMinutes
+    case thirtyMinutes
+    case never
+
+    var id: String { rawValue }
+
+    var seconds: TimeInterval? {
+        switch self {
+        case .fiveMinutes: return 5 * 60
+        case .thirtyMinutes: return 30 * 60
+        case .never: return nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .fiveMinutes: return "After 5 minutes"
+        case .thirtyMinutes: return "After 30 minutes"
+        case .never: return "Never"
+        }
+    }
+}
+
 /// The handful of preferences that only exist on the phone. Everything the Mac app also
 /// has (backend, cleanup level, engines) comes from the shared `AppSettings`.
 @MainActor
@@ -70,6 +96,7 @@ final class PhoneSettings: ObservableObject {
     private enum Key {
         static let sessionLength = "sessionLength"
         static let askedForNotifications = "askedForNotifications"
+        static let clipboardExpiry = "clipboardExpiry"
     }
 
     private let defaults: UserDefaults
@@ -83,10 +110,18 @@ final class PhoneSettings: ObservableObject {
         didSet { defaults.set(askedForNotifications, forKey: Key.askedForNotifications) }
     }
 
+    @Published var clipboardExpiry: ClipboardExpiry {
+        didSet { defaults.set(clipboardExpiry.rawValue, forKey: Key.clipboardExpiry) }
+    }
+
     init(defaults: UserDefaults = AppGroupStorage.defaults) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.sessionLength: SessionLength.fifteenMinutes.rawValue])
+        defaults.register(defaults: [
+            Key.sessionLength: SessionLength.fifteenMinutes.rawValue,
+            Key.clipboardExpiry: ClipboardExpiry.fiveMinutes.rawValue,
+        ])
         sessionLength = SessionLength(rawValue: defaults.string(forKey: Key.sessionLength) ?? "") ?? .fifteenMinutes
         askedForNotifications = defaults.bool(forKey: Key.askedForNotifications)
+        clipboardExpiry = ClipboardExpiry(rawValue: defaults.string(forKey: Key.clipboardExpiry) ?? "") ?? .fiveMinutes
     }
 }

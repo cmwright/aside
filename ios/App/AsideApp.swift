@@ -16,8 +16,11 @@ struct AsideApp: App {
                 .environmentObject(controller.dictionary)
                 .environmentObject(controller.phone)
                 .environmentObject(recent)
-                // The keyboard opens aside://session/start.
+                // The keyboard opens aside://session/start; the control aside://control/start.
                 .onOpenURL { controller.handle(url: $0) }
+                // `onChange(of: scenePhase)` does not fire for the initial value, so a cold
+                // launch also has to look for a session or commands left by an extension.
+                .task { controller.refresh() }
         }
         .onChange(of: scenePhase) { _, phase in
             // A session can expire while the app is suspended; catch up on the way back in.

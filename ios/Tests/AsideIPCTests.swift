@@ -176,6 +176,35 @@ final class AsideIPCTests: XCTestCase {
 
     // MARK: - Leading space
 
+    // MARK: - Control Center
+
+    func testCommandWithoutSourceDecodesAsKeyboard() throws {
+        let json = #"{"action":"start","at":"2026-01-01T00:00:00Z","id":"6B29FC40-CA47-1067-B31D-00DD010662DA"}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let command = try decoder.decode(DictationCommand.self, from: Data(json.utf8))
+        XCTAssertNil(command.source)
+        XCTAssertFalse(command.isFromControl)
+    }
+
+    func testControlCommandRoundTripsThroughTheStore() throws {
+        let store = store()
+        try store.writeCommand(DictationCommand(action: .stop, source: .control))
+        let pending = store.pendingCommands()
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending.first?.source, .control)
+        XCTAssertTrue(pending.first?.isFromControl == true)
+    }
+
+    func testControlStateIsWrittenReadAndRemoved() throws {
+        let store = store()
+        XCTAssertNil(store.readControlState())
+        try store.writeControlState(ControlState(recording: true))
+        XCTAssertEqual(store.readControlState()?.recording, true)
+        store.removeAll()
+        XCTAssertNil(store.readControlState())
+    }
+
     func testLeadingSpaceRuleMatchesTheMacInserter() {
         // Same table as the Mac's TextInserter.needsLeadingSpace, driven by context text.
         XCTAssertTrue(AsideIPC.needsLeadingSpace(contextBefore: "hello", text: "world"))

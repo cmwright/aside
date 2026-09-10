@@ -48,8 +48,8 @@ struct HomeView: View {
                 Spacer()
             }
             Text(controller.isSessionActive
-                 ? "The microphone is live. Switch to the Aside keyboard in any app and hold its mic button."
-                 : "Start a session, then switch to the Aside keyboard in whatever app you are typing in.")
+                 ? "The microphone is live. Switch to the Aside keyboard in any app and hold its mic button, or tap the Aside control in Control Center to dictate to the clipboard."
+                 : "Start a session, then switch to the Aside keyboard in whatever app you are typing in, or tap the Aside control in Control Center.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

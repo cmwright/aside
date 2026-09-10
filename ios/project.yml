@@ -66,6 +66,9 @@ targets:
       - target: AsideKeyboard
         embed: true
         codeSign: true
+      - target: AsideControl
+        embed: true
+        codeSign: true
     entitlements:
       path: Aside.entitlements
       # xcodegen rewrites the file from these on every run.
@@ -139,12 +142,47 @@ targets:
             IsASCIICapable: false
             PrefersRightToLeft: false
 
+  AsideControl:
+    type: app-extension
+    platform: iOS
+    # Control Center controls are an iOS 18 API and opening the app from one needs 18.2. The
+    # app itself still runs on 17; there the
+    # extension is simply never loaded.
+    deploymentTarget: "18.2"
+    sources:
+      - path: Control
+        excludes:
+          - Info.plist
+      - path: Shared
+    entitlements:
+      path: AsideControl.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.codywright.aside
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.ios.control
+        PRODUCT_NAME: AsideControl
+        INFOPLIST_FILE: Control/Info.plist
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+    info:
+      path: Control/Info.plist
+      properties:
+        CFBundleName: Aside
+        CFBundleDisplayName: Aside
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
 schemes:
   Aside:
     build:
       targets:
         Aside: all
         AsideKeyboard: all
+        AsideControl: all
     run:
       config: Debug
     archive:

@@ -1,7 +1,9 @@
 # Aside for iPhone
 
-A dictation keyboard. Hold the mic key in the Aside keyboard, speak, let go — the text
-lands at your cursor in whatever app you were typing in.
+A dictation keyboard, plus a Control Center control. Hold the mic key in the Aside
+keyboard, speak, let go — the text lands at your cursor in whatever app you were typing
+in. Or tap the Aside control in Control Center, speak, tap again — the text is copied to
+the clipboard for you to paste wherever you like.
 
 An iOS keyboard extension **cannot use the microphone**. That has been true since iOS 8 and
 is still true in iOS 26, with or without Full Access. So the work is split:
@@ -10,10 +12,15 @@ is still true in iOS 26, with or without Full Access. So the work is split:
   provider you chose), runs cleanup on Apple's on-device model (or at a provider), and
   applies your dictionary;
 - the **keyboard** writes a one-line command into a shared App Group folder, waits for the
-  answer, and pastes it.
+  answer, and pastes it;
+- the **control** (Control Center, Lock Screen, or the Action button; iOS 18.2 and later)
+  writes the same command, and the app puts the answer on the clipboard, with a
+  notification showing the text.
 
 Keeping the app's audio engine running is what keeps it alive in the background, so after
-one app switch per session every dictation is keyboard-only: tap, speak, tap, text appears.
+one app switch per session every dictation is keyboard-only or control-only: tap, speak,
+tap, text appears. A control tapped with no session running opens Aside once, which starts
+the session and the recording.
 
 ```
 ios/
@@ -22,6 +29,7 @@ ios/
   Shared/AsideIPC.swift    the hand-off protocol, unit-tested from the Mac test target
   App/               the app: session engine, recorder, pipeline, four screens
   Keyboard/          the keyboard extension: status line, mic button, four keys
+  Control/           the Control Center toggle (a WidgetKit control + one App Intent)
   Tests/             AsideIPCTests.swift (runs in the Mac test target — see below)
 ```
 
@@ -93,6 +101,12 @@ If the keyboard says "Start a session", tap that line: it opens the app and star
 has no API to send you back automatically — use the small back breadcrumb at the top left of
 the status bar.
 
+12. **Add the control** (optional): open Control Center, tap **+** at the top left, **Add a
+    Control**, and pick **Aside Dictation**. It can also go on the Lock Screen, and on an
+    iPhone with an Action button, Settings → Action Button → Controls → Aside Dictation.
+    Tap it to record, tap again to stop; the text is copied and a notification shows it.
+    Settings → Control Center chooses when iOS clears the copied text.
+
 ## Settings
 
 - **Transcription** — *On this iPhone (Parakeet v3)*, the default, downloads a ~600 MB
@@ -120,8 +134,9 @@ ambiguity, and every write is atomic:
 | File | Written by | Contents |
 | --- | --- | --- |
 | `session.json` | app | `active`, `startedAt`, `expiresAt`, `pid` |
-| `commands/<uuid>.json` | keyboard | `start` / `stop` / `cancel`, plus ~40 characters of text before the cursor |
-| `results/<uuid>.json` | app | `recording` / `processing` / `done` / `failed`, the text, timings |
+| `control.json` | app | `recording`: whether a control-started dictation is being recorded, for the toggle |
+| `commands/<uuid>.json` | keyboard or control | `start` / `stop` / `cancel`, `source`, plus ~40 characters of text before the cursor (keyboard only) |
+| `results/<uuid>.json` | app | `recording` / `processing` / `done` / `failed`, the text, timings (keyboard only; the control's text goes to the clipboard) |
 
 The `start` command's id is the dictation's id and the key of its result file; `stop` and
 `cancel` are separate commands that apply to whatever is in flight, since only one dictation

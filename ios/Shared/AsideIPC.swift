@@ -1,20 +1,24 @@
 import Foundation
 
-/// The hand-off between the Aside iPhone app and its keyboard extension.
+/// The hand-off between the Aside iPhone app and its extensions: the keyboard and the
+/// Control Center control.
 ///
-/// An iOS keyboard extension cannot touch the microphone, so the app does the recording and
-/// the keyboard only asks for it and pastes the answer. Everything travels through the App
-/// Group container as small JSON files rather than `UserDefaults`, because two processes
-/// reading the same defaults suite see cached values at unpredictable moments, while the
-/// file system is coherent. Every write is atomic, so a reader never sees half a file.
+/// Neither extension can touch the microphone, so the app does the recording and the
+/// extensions only ask for it. The keyboard pastes the answer; the control has nowhere to
+/// paste, so the app puts the text on the clipboard instead. Everything travels through the
+/// App Group container as small JSON files rather than `UserDefaults`, because two
+/// processes reading the same defaults suite see cached values at unpredictable moments,
+/// while the file system is coherent. Every write is atomic, so a reader never sees half
+/// a file.
 ///
 /// Layout inside the container:
 ///
 ///     session.json              written by the app
-///     commands/<uuid>.json      written by the keyboard
-///     results/<uuid>.json       written by the app, keyed by the command id
+///     control.json              written by the app: is a control-started dictation recording
+///     commands/<uuid>.json      written by the keyboard or the control
+///     results/<uuid>.json       written by the app for the keyboard, keyed by the command id
 ///
-/// Foundation only: this file is compiled into the app, the keyboard extension and the Mac
+/// Foundation only: this file is compiled into the app, both extensions and the Mac
 /// unit-test target.
 enum AsideIPC {
     static let appGroupID = "group.com.codywright.aside"
@@ -91,7 +95,7 @@ struct SessionState: Codable, Equatable, Sendable {
     }
 }
 
-/// `commands/<uuid>.json`, written by the keyboard.
+/// `commands/<uuid>.json`, written by the keyboard or the control.
 struct DictationCommand: Codable, Equatable, Sendable, Identifiable {
     enum Action: String, Codable, Sendable {
         case start
@@ -99,17 +103,40 @@ struct DictationCommand: Codable, Equatable, Sendable, Identifiable {
         case cancel
     }
 
+    /// Who asked, which decides where the text goes: back to the keyboard as a result file,
+    /// or onto the clipboard for the control. Absent in files from older keyboards, which
+    /// means the keyboard.
+    enum Source: String, Codable, Sendable {
+        case keyboard
+        case control
+    }
+
     var id: UUID
     var action: Action
     var at: Date
     /// The last ~40 characters before the cursor, so the app can decide on a leading space.
     var contextBefore: String?
+    var source: Source?
 
-    init(id: UUID = UUID(), action: Action, at: Date = Date(), contextBefore: String? = nil) {
+    init(id: UUID = UUID(), action: Action, at: Date = Date(), contextBefore: String? = nil, source: Source? = nil) {
         self.id = id
         self.action = action
         self.at = at
         self.contextBefore = contextBefore
+        self.source = source
+    }
+
+    var isFromControl: Bool { source == .control }
+}
+
+/// `control.json`, written by the app so the Control Center toggle can show its state.
+struct ControlState: Codable, Equatable, Sendable {
+    var recording: Bool
+    var updatedAt: Date
+
+    init(recording: Bool, updatedAt: Date = Date()) {
+        self.recording = recording
+        self.updatedAt = updatedAt
     }
 }
 
@@ -184,6 +211,7 @@ struct AsideIPCStore: Sendable {
     }
 
     var sessionURL: URL { root.appendingPathComponent("session.json") }
+    var controlURL: URL { root.appendingPathComponent("control.json") }
     var commandsDirectory: URL { root.appendingPathComponent("commands", isDirectory: true) }
     var resultsDirectory: URL { root.appendingPathComponent("results", isDirectory: true) }
 
@@ -225,6 +253,16 @@ struct AsideIPCStore: Sendable {
             expiresAt: existing?.expiresAt,
             pid: existing?.pid ?? Int(ProcessInfo.processInfo.processIdentifier)
         ))
+    }
+
+    // MARK: Control
+
+    func writeControlState(_ state: ControlState) throws {
+        try write(state, to: controlURL)
+    }
+
+    func readControlState() -> ControlState? {
+        read(ControlState.self, from: controlURL)
     }
 
     // MARK: Commands
@@ -279,11 +317,12 @@ struct AsideIPCStore: Sendable {
         return removed
     }
 
-    /// Removes everything: both directories and the session file.
+    /// Removes everything: both directories and the state files.
     func removeAll() {
         try? fileManager.removeItem(at: commandsDirectory)
         try? fileManager.removeItem(at: resultsDirectory)
         try? fileManager.removeItem(at: sessionURL)
+        try? fileManager.removeItem(at: controlURL)
     }
 
     // MARK: Plumbing

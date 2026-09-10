@@ -89,7 +89,19 @@ struct PhoneSettingsView: View {
                 } header: {
                     Text("Session")
                 } footer: {
-                    Text("A session keeps the microphone alive in the background so the keyboard can dictate without another app switch. Changing this applies to the next session.")
+                    Text("A session keeps the microphone alive in the background so the keyboard and the Control Center control can dictate without another app switch. Changing this applies to the next session.")
+                }
+
+                Section {
+                    Picker("Clear copied text", selection: $phone.clipboardExpiry) {
+                        ForEach(ClipboardExpiry.allCases) { expiry in
+                            Text(expiry.title).tag(expiry)
+                        }
+                    }
+                } header: {
+                    Text("Control Center")
+                } footer: {
+                    Text("A dictation started from the Aside control in Control Center is copied to the clipboard for you to paste. iOS clears it at this deadline.")
                 }
             }
             .navigationTitle("Settings")
