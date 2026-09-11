@@ -73,6 +73,9 @@ struct KeyboardRootView: View {
                     .accessibilityLabel("Open Aside to start a session")
             } else {
                 micFace
+                    .scaleEffect(holding ? 0.94 : 1)
+                    .animation(.spring(duration: 0.25, bounce: 0.35), value: holding)
+                    .animation(.easeInOut(duration: 0.3), value: model.state)
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { _ in
@@ -107,28 +110,36 @@ struct KeyboardRootView: View {
 
     private var micFace: some View {
         ZStack {
-            MeterRing(size: 92, live: model.state == .listening, level: model.isLatched ? 0.6 : 0.35)
-            Circle()
-                .fill(micFill)
-                .frame(width: 72, height: 72)
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                .shadow(color: .black.opacity(0.5), radius: 10, y: 8)
-            Image(systemName: "mic.fill")
+            MeterRing(size: 92, live: model.state == .listening, level: model.state == .listening ? 0.6 : 0)
+            if model.state == .listening {
+                Circle().stroke(Theme.live, lineWidth: 1.5)
+                    .frame(width: 72, height: 72)
+                    .phaseAnimator([0.0, 1.0]) { view, phase in
+                        view.scaleEffect(1 + phase * 0.25).opacity(0.7 * (1 - phase))
+                    } animation: { _ in .easeOut(duration: 1.4) }
+                    .transition(.opacity)
+            }
+            ZStack {
+                Circle().fill(Theme.surface2).opacity(model.state == .noSession ? 1 : 0)
+                Circle().fill(Theme.violetDisc).opacity(model.state == .ready ? 1 : 0)
+                Circle().fill(Theme.amber).opacity(model.state == .transcribing ? 1 : 0)
+                Circle().fill(Theme.liveDisc).opacity(model.state == .listening ? 1 : 0)
+            }
+            .frame(width: 72, height: 72)
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+            .shadow(color: .black.opacity(0.5), radius: 10, y: 8)
+            Image(systemName: model.state == .listening ? "waveform" : model.state == .transcribing ? "ellipsis" : "mic.fill")
                 .font(.system(size: 28, weight: .medium))
                 .foregroundStyle(model.state == .noSession ? Theme.text3 : .white)
+                .contentTransition(.symbolEffect(.replace.downUp))
+                .symbolEffect(.variableColor.iterative.reversing, isActive: model.state == .listening)
+                .symbolEffect(.variableColor.iterative, isActive: model.state == .transcribing)
         }
         .frame(width: 92, height: 92)
         .contentShape(Circle())
     }
 
-    private var micFill: AnyShapeStyle {
-        switch model.state {
-        case .listening: return AnyShapeStyle(Theme.liveDisc)
-        case .transcribing: return AnyShapeStyle(Theme.amber)
-        case .noSession: return AnyShapeStyle(Theme.surface2)
-        default: return AnyShapeStyle(Theme.violetDisc)
-        }
-    }
+    // The disc is four crossfading circles above; error states fall back to the ready disc.
 
     private var fullAccessHelp: some View {
         Text(model.state == .noAppGroup

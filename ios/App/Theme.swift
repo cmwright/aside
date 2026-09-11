@@ -139,7 +139,7 @@ struct Wordmark: View {
 struct MeterRing: View {
     var size: CGFloat
     var live = false
-    /// 0...1, only read while live.
+    /// 0...1, only read while live. Animatable, so a level change sweeps the segments.
     var level: Float = 0
 
     private static let segments = 48
@@ -163,6 +163,13 @@ struct MeterRing: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+}
+
+extension MeterRing: @preconcurrency Animatable {
+    var animatableData: Float {
+        get { level }
+        set { level = newValue }
     }
 }
 
@@ -204,27 +211,53 @@ struct Card<Content: View>: View {
 }
 
 /// A capsule with a status dot and a mono label; the session indicator and small actions.
+/// The label swaps digits in place (a countdown), and a `pulsing` dot breathes.
 struct Pill: View {
     var text: String
     var dot: Color?
     var systemImage: String?
     var textColor: Color = Theme.text2
+    var pulsing = false
 
     var body: some View {
         HStack(spacing: 8) {
             if let dot {
-                Circle().fill(dot).frame(width: 7, height: 7).shadow(color: dot, radius: 4)
+                Circle().fill(dot).frame(width: 7, height: 7)
+                    .overlay {
+                        if pulsing {
+                            Circle().stroke(dot, lineWidth: 1.5)
+                                .phaseAnimator([0.0, 1.0]) { view, phase in
+                                    view.scaleEffect(1 + phase * 1.6).opacity(1 - phase)
+                                } animation: { _ in .easeOut(duration: 1.6) }
+                        }
+                    }
+                    .shadow(color: dot.opacity(pulsing ? 0.9 : 0.5), radius: 4)
             }
             if let systemImage {
                 Image(systemName: systemImage).font(.system(size: 12, weight: .medium)).foregroundStyle(textColor)
+                    .contentTransition(.symbolEffect(.replace))
             }
             MonoLabel(text, color: textColor)
+                .contentTransition(.numericText(countsDown: true))
         }
+        .animation(.snappy(duration: 0.3), value: text)
+        .animation(.easeInOut(duration: 0.3), value: pulsing)
         .padding(.horizontal, 12)
         .frame(minHeight: 44)
         .background(Theme.surface, in: Capsule())
         .overlay(Capsule().strokeBorder(Theme.line))
         .contentShape(Capsule())
+    }
+}
+
+/// Press feedback for the big controls: a quick, springy shrink while the finger is down.
+struct PressableStyle: ButtonStyle {
+    var scale: CGFloat = 0.95
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(.spring(duration: 0.25, bounce: 0.35), value: configuration.isPressed)
     }
 }
 
