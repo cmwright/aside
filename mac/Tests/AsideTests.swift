@@ -211,8 +211,54 @@ final class AsideTests: XCTestCase {
         XCTAssertFalse(t.latched)
     }
 
+    func testTapLatchesAndNextPressStops() {
+        var t = TriggerLogic()
+        XCTAssertEqual(t.tapBehavior, .latch, "one tap keeps listening by default")
+        XCTAssertEqual(t.keyDown(at: 0), .start)
+        XCTAssertEqual(t.keyUp(at: 0.1), .latch)
+        XCTAssertTrue(t.latched)
+        XCTAssertEqual(t.tapWindowExpired(), .ignore, "no window is pending in tap mode")
+        XCTAssertEqual(t.keyDown(at: 5), .stopLatched)
+        XCTAssertFalse(t.latched)
+        XCTAssertEqual(t.keyUp(at: 5.1), .ignore)
+        XCTAssertEqual(t.keyDown(at: 6), .start, "the next press is a fresh gesture")
+    }
+
+    func testHoldStillSendsWhenTapsLatch() {
+        var t = TriggerLogic()
+        XCTAssertEqual(t.keyDown(at: 0), .start)
+        XCTAssertEqual(t.keyUp(at: 0.5), .send)
+        XCTAssertFalse(t.latched)
+    }
+
+    func testTapBehaviorReadsTheSharedDefault() {
+        let defaults = UserDefaults(suiteName: "AsideTests.tapBehavior")!
+        defaults.removePersistentDomain(forName: "AsideTests.tapBehavior")
+        XCTAssertEqual(TriggerLogic.TapBehavior.stored(in: nil), .latch)
+        XCTAssertEqual(TriggerLogic.TapBehavior.stored(in: defaults), .latch)
+        defaults.set("send", forKey: TriggerLogic.TapBehavior.defaultsKey)
+        XCTAssertEqual(TriggerLogic.TapBehavior.stored(in: defaults), .send)
+        defaults.set("bogus", forKey: TriggerLogic.TapBehavior.defaultsKey)
+        XCTAssertEqual(TriggerLogic.TapBehavior.stored(in: defaults), .latch)
+    }
+
+    @MainActor
+    func testDoubleTapSwitchedOffBeforeMigratesToSend() {
+        let name = "AsideTests.settingsMigration"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        XCTAssertEqual(AppSettings(defaults: defaults).tapBehavior, .latch)
+        defaults.set(false, forKey: "doubleTapToLatch")
+        XCTAssertEqual(AppSettings(defaults: defaults).tapBehavior, .send)
+        defaults.set(true, forKey: "doubleTapToLatch")
+        XCTAssertEqual(AppSettings(defaults: defaults).tapBehavior, .latch, "the old default gets the new default")
+        defaults.set("doubleTapLatches", forKey: "tapBehavior")
+        XCTAssertEqual(AppSettings(defaults: defaults).tapBehavior, .doubleTapLatches)
+    }
+
     func testDoubleTapLatchesAndNextPressStops() {
         var t = TriggerLogic()
+        t.tapBehavior = .doubleTapLatches
         XCTAssertEqual(t.keyDown(at: 0), .start)
         XCTAssertEqual(t.keyUp(at: 0.1), .tapPending)
         XCTAssertEqual(t.keyDown(at: 0.25), .latch)
@@ -226,6 +272,7 @@ final class AsideTests: XCTestCase {
 
     func testSingleTapDiscardsWhenWindowExpires() {
         var t = TriggerLogic()
+        t.tapBehavior = .doubleTapLatches
         XCTAssertEqual(t.keyDown(at: 0), .start)
         XCTAssertEqual(t.keyUp(at: 0.1), .tapPending)
         XCTAssertEqual(t.tapWindowExpired(), .discard)
@@ -234,22 +281,24 @@ final class AsideTests: XCTestCase {
 
     func testSecondPressOutsideWindowIsAFreshStart() {
         var t = TriggerLogic()
+        t.tapBehavior = .doubleTapLatches
         _ = t.keyDown(at: 0)
         XCTAssertEqual(t.keyUp(at: 0.1), .tapPending)
         XCTAssertEqual(t.keyDown(at: 1.0), .start)
     }
 
-    func testDisabledWindowAlwaysSends() {
+    func testSendBehaviorTreatsATapAsAShortHold() {
         var t = TriggerLogic()
-        t.doubleTapWindow = 0
+        t.tapBehavior = .send
         XCTAssertEqual(t.keyDown(at: 0), .start)
         XCTAssertEqual(t.keyUp(at: 0.05), .send)
+        XCTAssertFalse(t.latched)
         XCTAssertEqual(t.keyDown(at: 0.1), .start)
     }
 
     func testResetClearsLatch() {
         var t = TriggerLogic()
-        _ = t.keyDown(at: 0); _ = t.keyUp(at: 0.1); _ = t.keyDown(at: 0.2)
+        _ = t.keyDown(at: 0); _ = t.keyUp(at: 0.1)
         XCTAssertTrue(t.latched)
         t.reset()
         XCTAssertFalse(t.latched)

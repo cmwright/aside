@@ -260,7 +260,7 @@ final class AppController: ObservableObject {
         Log.app.debug("flagsChanged right-option down=\(isDown, privacy: .public)")
         guard isDown != rightOptionDown else { return }
         rightOptionDown = isDown
-        trigger.doubleTapWindow = settings.doubleTapToLatch ? TriggerLogic().doubleTapWindow : 0
+        trigger.tapBehavior = settings.tapBehavior
         let action = isDown ? trigger.keyDown(at: timestamp) : trigger.keyUp(at: timestamp)
         perform(action)
     }
@@ -274,7 +274,7 @@ final class AppController: ObservableObject {
         case .tapPending:
             // Keep recording so a double-tap loses no audio; decide when the window closes.
             tapWindowTask?.cancel()
-            let window = trigger.doubleTapWindow
+            let window = trigger.tapWindow
             tapWindowTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(window))
                 guard !Task.isCancelled else { return }

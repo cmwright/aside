@@ -81,6 +81,16 @@ struct PhoneSettingsView: View {
                 }
 
                 Section {
+                    Picker("A quick tap", selection: $settings.tapBehavior) {
+                        ForEach(TriggerLogic.TapBehavior.allCases) { Text($0.title).tag($0) }
+                    }
+                } header: {
+                    Text("Mic button")
+                } footer: {
+                    Text("For the keyboard's mic button and the one on the Home tab. Holding always works: hold, speak, let go.")
+                }
+
+                Section {
                     Picker("Session length", selection: $phone.sessionLength) {
                         ForEach(SessionLength.allCases) { length in
                             Text(length.title).tag(length)

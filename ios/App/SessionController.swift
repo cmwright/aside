@@ -88,6 +88,9 @@ final class SessionController: ObservableObject {
     private var pollTimer: Timer?
     private var expiryTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
+    /// The Home tab's talk button, run through the same gesture logic as the keyboard.
+    private var talkTrigger = TriggerLogic()
+    private var talkTapWindowTask: Task<Void, Never>?
     private var current: Origin?
     private var lastControlRecording = false
 
@@ -461,9 +464,53 @@ final class SessionController: ObservableObject {
 
     // MARK: - One dictation
 
-    /// The in-app hold-to-talk button. Starts the audio engine on its own when no session
-    /// is running, so the app is useful without ever enabling the keyboard.
+    /// The in-app talk button: hold, or tap according to the tap setting. Starts the audio
+    /// engine on its own when no session is running, so the app is useful without ever
+    /// enabling the keyboard.
     func pushToTalkDown() {
+        talkTrigger.tapBehavior = settings.tapBehavior
+        talkTapWindowTask?.cancel()
+        // A latched dictation that ended some other way (watchdog, failure) must not turn
+        // this press into a "stop".
+        if talkTrigger.latched, phase != .listening { talkTrigger.reset() }
+        switch talkTrigger.keyDown(at: Date().timeIntervalSinceReferenceDate) {
+        case .start:
+            startPushToTalk()
+        case .stopLatched:
+            endDictationAndProcess()
+        case .latch:
+            objectWillChange.send()
+        default:
+            break
+        }
+    }
+
+    func pushToTalkUp() {
+        switch talkTrigger.keyUp(at: Date().timeIntervalSinceReferenceDate) {
+        case .send:
+            endDictationAndProcess()
+        case .tapPending:
+            scheduleTalkTapWindow()
+        case .latch:
+            objectWillChange.send()
+        default:
+            break
+        }
+    }
+
+    var isTalkLatched: Bool { talkTrigger.latched }
+
+    private func scheduleTalkTapWindow() {
+        talkTapWindowTask?.cancel()
+        let window = talkTrigger.tapWindow
+        talkTapWindowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(window))
+            guard !Task.isCancelled, let self else { return }
+            if self.talkTrigger.tapWindowExpired() == .discard { self.cancelDictation() }
+        }
+    }
+
+    private func startPushToTalk() {
         if let problem = configurationProblem() {
             phase = .failed(problem.message)
             return
@@ -477,10 +524,6 @@ final class SessionController: ObservableObject {
             }
         }
         beginDictation(origin: .app)
-    }
-
-    func pushToTalkUp() {
-        endDictationAndProcess()
     }
 
     private func beginDictation(origin: Origin) {

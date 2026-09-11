@@ -5,6 +5,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var controller: SessionController
     @EnvironmentObject private var phone: PhoneSettings
+    @EnvironmentObject private var settings: AppSettings
     // Observed so the gate re-evaluates as the model downloads or Apple Intelligence changes.
     @ObservedObject private var transcriber = LocalTranscriber.shared
     @ObservedObject private var appleCleanup = AppleCleanup.shared
@@ -76,7 +77,7 @@ struct HomeView: View {
 
     private var talkCard: some View {
         Card {
-            Text("Hold to talk")
+            Text(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
                 .font(.headline)
             Text("Works right here, with or without a session.")
                 .font(.footnote)
@@ -87,9 +88,9 @@ struct HomeView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(holding ? Color.red : (problem == nil ? Color.accentColor : Color.secondary.opacity(0.4)))
+                        .fill(holding || controller.phase == .listening ? Color.red : (problem == nil ? Color.accentColor : Color.secondary.opacity(0.4)))
                         .frame(width: 110, height: 110)
-                    Image(systemName: holding ? "waveform" : "mic.fill")
+                    Image(systemName: holding || controller.phase == .listening ? "waveform" : "mic.fill")
                         .font(.system(size: 40, weight: .medium))
                         .foregroundStyle(.white)
                 }
@@ -111,7 +112,7 @@ struct HomeView: View {
                         controller.pushToTalkUp()
                     }
             )
-            .accessibilityLabel("Hold to talk")
+            .accessibilityLabel(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
 
             Text(problem == nil || controller.phase != .idle ? controller.phase.label : "Not ready")
                 .font(.subheadline)

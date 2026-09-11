@@ -56,12 +56,15 @@ targets:
       # Shared with the Mac app by reference, never copied. See PLAN-iOS.md.
       - path: ../mac/Sources/Log.swift
       - path: ../mac/Sources/Settings.swift
+      - path: ../mac/Sources/Trigger.swift
       - path: ../mac/Sources/Dictionary.swift
       - path: ../mac/Sources/DictionaryReplacer.swift
       - path: ../mac/Sources/CleanupPrompt.swift
       - path: ../mac/Sources/History.swift
       - path: ../mac/Sources/AppleCleanup.swift
       - path: ../mac/Sources/LocalTranscriber.swift
+      # WAV writer and the realtime PCM sink both recorders are built on.
+      - path: ../mac/Sources/PCMCapture.swift
       # Direct providers: an OpenAI-compatible endpoint called straight from the phone,
       # with the key in the keychain.
       - path: ../mac/Sources/Providers.swift

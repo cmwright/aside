@@ -30,7 +30,9 @@ final class AppSettings: ObservableObject {
         static let cleanup = "cleanupLevel"
         static let playSounds = "playSounds"
         static let holdRightOption = "holdRightOption"
+        /// Pre-0.3 Boolean, only read to map an explicit "off" onto `tapBehavior`.
         static let doubleTapToLatch = "doubleTapToLatch"
+        static let tapBehavior = TriggerLogic.TapBehavior.defaultsKey
         static let transcriptionMode = "transcriptionMode"
         static let logDictationsToFile = "logDictationsToFile"
         static let cleanupEngine = "cleanupEngine"
@@ -78,11 +80,12 @@ final class AppSettings: ObservableObject {
     @Published var backendToken: String { didSet { defaults.set(backendToken, forKey: Key.backendToken) } }
     @Published var cleanup: CleanupLevel { didSet { defaults.set(cleanup.rawValue, forKey: Key.cleanup) } }
     @Published var playSounds: Bool { didSet { defaults.set(playSounds, forKey: Key.playSounds) } }
-    /// Hold-to-talk on Right Option. This is the default trigger; the KeyboardShortcuts
+    /// Right Option is the dictation key. This is the default trigger; the KeyboardShortcuts
     /// combo below is an optional press-to-start / press-to-stop alternative.
     @Published var holdRightOption: Bool { didSet { defaults.set(holdRightOption, forKey: Key.holdRightOption) } }
-    /// Double-tap Right Option to keep listening hands-free; tap once more to stop.
-    @Published var doubleTapToLatch: Bool { didSet { defaults.set(doubleTapToLatch, forKey: Key.doubleTapToLatch) } }
+    /// What a quick tap of the dictation key does; holding always works. On the phone this
+    /// lives in the App Group suite, where the keyboard extension reads it directly.
+    @Published var tapBehavior: TriggerLogic.TapBehavior { didSet { defaults.set(tapBehavior.rawValue, forKey: Key.tapBehavior) } }
     /// Where speech becomes text: the Worker's provider, or Parakeet on this Mac.
     @Published var transcriptionMode: TranscriptionMode { didSet { defaults.set(transcriptionMode.rawValue, forKey: Key.transcriptionMode) } }
     /// Opt-in: append raw and final text of every dictation to ~/Library/Logs/Aside/dictations.jsonl.
@@ -107,7 +110,6 @@ final class AppSettings: ObservableObject {
             Key.backendURL: AppSettings.defaultBackendURL,
             Key.playSounds: true,
             Key.holdRightOption: true,
-            Key.doubleTapToLatch: true,
             Key.transcriptionMode: AppSettings.defaultTranscriptionMode.rawValue,
             Key.logDictationsToFile: false,
             Key.cleanupEngine: AppSettings.defaultCleanupEngine.rawValue,
@@ -120,7 +122,12 @@ final class AppSettings: ObservableObject {
         cleanup = CleanupLevel(rawValue: defaults.string(forKey: Key.cleanup) ?? "") ?? .medium
         playSounds = defaults.bool(forKey: Key.playSounds)
         holdRightOption = defaults.bool(forKey: Key.holdRightOption)
-        doubleTapToLatch = defaults.bool(forKey: Key.doubleTapToLatch)
+        if defaults.object(forKey: Key.tapBehavior) == nil, defaults.object(forKey: Key.doubleTapToLatch) as? Bool == false {
+            // Whoever switched the double-tap off before 0.3 wanted a tap to send, not to latch.
+            tapBehavior = .send
+        } else {
+            tapBehavior = TriggerLogic.TapBehavior.stored(in: defaults)
+        }
         transcriptionMode = AppSettings.supported(
             TranscriptionMode(rawValue: defaults.string(forKey: Key.transcriptionMode) ?? "") ?? AppSettings.defaultTranscriptionMode)
         logDictationsToFile = defaults.bool(forKey: Key.logDictationsToFile)
@@ -146,7 +153,7 @@ final class AppSettings: ObservableObject {
               let legacy = UserDefaults(suiteName: "com.codywright.voicetotext")?.dictionaryRepresentation(),
               !legacy.isEmpty else { return }
         let ours: Set<String> = [Key.backendURL, Key.backendToken, Key.cleanup, Key.playSounds,
-                                 Key.holdRightOption, Key.doubleTapToLatch, Key.transcriptionMode]
+                                 Key.holdRightOption, Key.doubleTapToLatch, Key.tapBehavior, Key.transcriptionMode]
         var copied = 0
         for (key, value) in legacy where ours.contains(key) || key.hasPrefix("KeyboardShortcuts_") {
             if defaults.object(forKey: key) == nil {
@@ -198,6 +205,17 @@ final class AppSettings: ObservableObject {
     var trimmedToken: String? {
         let token = backendToken.trimmingCharacters(in: .whitespacesAndNewlines)
         return token.isEmpty ? nil : token
+    }
+}
+
+extension TriggerLogic.TapBehavior {
+    /// Picker label. The key is "Right Option" on the Mac and the mic button on the phone.
+    var title: String {
+        switch self {
+        case .latch: return "Starts listening; tap again to stop"
+        case .doubleTapLatches: return "Nothing; double-tap to keep listening"
+        case .send: return "Sends the short recording"
+        }
     }
 }
 

@@ -35,8 +35,10 @@ relative paths (`../mac/Sources/<file>`), do not copy them:
   `AppSettings(defaults:)` already take injectable storage, use the App Group for both)
 - `LocalTranscriber.swift` (FluidAudio, works on iOS 17+), `AppleCleanup.swift`
   (FoundationModels, guard with `#available(iOS 26, *)`; `#if canImport` is already there)
-- `Recorder.swift` (AVAudioEngine; on iOS the app must configure and activate
-  `AVAudioSession` before `start`)
+- `PCMCapture.swift` (the WAV writer and the realtime PCM sink; each app keeps its own
+  recorder around it, because the phone's must survive interruptions and route changes)
+- `Trigger.swift` (the hold / tap gesture state machine, and the tap preference the
+  keyboard extension reads straight from the App Group suite)
 
 If one of those needs a platform guard to compile on iOS, make the smallest possible
 `#if os(macOS)` / `#if canImport(AppKit)` edit and list it in the report. Do not otherwise

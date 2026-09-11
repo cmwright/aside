@@ -84,6 +84,8 @@ final class KeyboardModel: ObservableObject {
             return
         }
         ipc = store
+        // The app writes the preference to the App Group suite, which Full Access lets us read.
+        trigger.tapBehavior = TriggerLogic.TapBehavior.stored(in: UserDefaults(suiteName: AsideIPC.appGroupID))
         resultObserver = DarwinObserver(name: AsideIPC.resultNotification) { [weak self] in
             Task { @MainActor in self?.tick() }
         }
@@ -105,7 +107,7 @@ final class KeyboardModel: ObservableObject {
 
     // MARK: - The mic button
 
-    /// Touch down. Hold-to-talk starts here; a double tap latches, mirroring the Mac.
+    /// Touch down. A hold or a tap starts here; what a tap means is `tapBehavior`, mirroring the Mac.
     func micDown() {
         guard let ipc, state.canDictate || state == .noSession else { return }
         guard hasUsableSession(ipc) else {
@@ -119,7 +121,7 @@ final class KeyboardModel: ObservableObject {
             finishRecording()
         case .latch:
             // Already recording; the second press just means "keep going hands-free".
-            break
+            objectWillChange.send()
         default:
             break
         }
@@ -132,16 +134,20 @@ final class KeyboardModel: ObservableObject {
             finishRecording()
         case .tapPending:
             scheduleTapWindow()
+        case .latch:
+            // A quick tap in the default mode: keep listening until the next press.
+            objectWillChange.send()
         default:
             break
         }
     }
 
     var isLatched: Bool { trigger.latched }
+    var tapBehavior: TriggerLogic.TapBehavior { trigger.tapBehavior }
 
     private func scheduleTapWindow() {
         tapWindowTask?.cancel()
-        let window = trigger.doubleTapWindow
+        let window = trigger.tapWindow
         tapWindowTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(window))
             guard !Task.isCancelled else { return }

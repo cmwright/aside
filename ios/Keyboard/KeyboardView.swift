@@ -90,7 +90,7 @@ struct KeyboardRootView: View {
                                 model.micUp()
                             }
                     )
-                    .accessibilityLabel("Hold to dictate")
+                    .accessibilityLabel(model.tapBehavior == .latch ? "Tap to dictate" : "Hold to dictate")
             }
 
             Text(micCaption)
@@ -101,7 +101,12 @@ struct KeyboardRootView: View {
 
     private var micCaption: String {
         if model.state.isTappableForSession { return "Tap to open Aside and start a session" }
-        return model.isLatched ? "Tap to stop" : "Hold to talk · double-tap to keep going"
+        if model.isLatched { return "Tap to stop" }
+        switch model.tapBehavior {
+        case .latch: return "Tap to talk · tap again to stop"
+        case .doubleTapLatches: return "Hold to talk · double-tap to keep going"
+        case .send: return "Hold to talk"
+        }
     }
 
     private var micFace: some View {

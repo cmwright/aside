@@ -61,7 +61,7 @@ struct HistoryView: View {
                     pane("Final, after cleanup and dictionary", record.finalText)
                 } else {
                     Spacer()
-                    Text("No dictations yet. Hold Right Option and say something.")
+                    Text("No dictations yet. Press Right Option and say something.")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                     Spacer()

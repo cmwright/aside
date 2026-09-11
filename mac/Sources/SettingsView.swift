@@ -133,13 +133,15 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section("Trigger") {
-                Toggle("Hold Right Option to talk", isOn: $settings.holdRightOption)
+                Toggle("Right Option is the dictation key", isOn: $settings.holdRightOption)
                 Text("Hold the key, speak, let go. Needs Accessibility permission.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("Double-tap Right Option to keep listening", isOn: $settings.doubleTapToLatch)
-                    .disabled(!settings.holdRightOption)
-                Text("Tap twice to go hands-free; tap once more to stop and send.")
+                Picker("A quick tap", selection: $settings.tapBehavior) {
+                    ForEach(TriggerLogic.TapBehavior.allCases) { Text($0.title).tag($0) }
+                }
+                .disabled(!settings.holdRightOption)
+                Text("Holding always works. By default one tap keeps listening hands-free until you tap again.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
