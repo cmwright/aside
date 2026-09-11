@@ -127,7 +127,7 @@ struct KeyboardRootView: View {
             }
             .frame(width: 72, height: 72)
             .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-            .shadow(color: .black.opacity(0.5), radius: 10, y: 8)
+            .shadow(color: Theme.shadow, radius: 10, y: 8)
             Image(systemName: model.state == .listening ? "waveform" : model.state == .transcribing ? "ellipsis" : "mic.fill")
                 .font(.system(size: 28, weight: .medium))
                 .foregroundStyle(model.state == .noSession ? Theme.text3 : .white)
@@ -182,7 +182,7 @@ private struct KeyButton: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(pressed ? Theme.line2 : Theme.surface2)
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
-                .shadow(color: .black.opacity(0.5), radius: 0, y: 1)
+                .shadow(color: Theme.shadow, radius: 0, y: 1)
             if let title {
                 Text(title).font(.system(size: 16)).foregroundStyle(Theme.text)
             } else if let systemImage {

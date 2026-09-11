@@ -20,7 +20,6 @@ struct AsideApp: App {
                 // `onChange(of: scenePhase)` does not fire for the initial value, so a cold
                 // launch also has to look for a session or commands left by an extension.
                 .task { controller.refresh() }
-                .preferredColorScheme(.dark)
                 .tint(Theme.violet)
         }
         .onChange(of: scenePhase) { _, phase in
@@ -46,13 +45,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             MainActor.assumeIsolated { SessionController.shared.selectedTab = tab }
         }
         #endif
-        // Screen titles in the word mark's face; everything else stays system type.
-        if let large = UIFont(name: "BarlowCondensed-SemiBold", size: 34),
-           let small = UIFont(name: "BarlowCondensed-SemiBold", size: 20) {
-            let bar = UINavigationBar.appearance()
-            bar.largeTitleTextAttributes = [.font: large, .foregroundColor: UIColor(Theme.text)]
-            bar.titleTextAttributes = [.font: small, .foregroundColor: UIColor(Theme.text)]
-        }
         MainActor.assumeIsolated {
             SessionController.shared.prepareEngines()
             Log.app.info("Aside for iPhone launched")

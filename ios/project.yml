@@ -115,8 +115,8 @@ targets:
         # the background, which is the whole point of "Start Session".
         UIBackgroundModes: [audio]
         NSMicrophoneUsageDescription: "Aside records your voice while you hold the mic button, and transcribes it on this iPhone or at the provider you chose."
-        # Bundled, OFL-licensed: the word mark and titles, and the meter labels.
-        UIAppFonts: [BarlowCondensed-SemiBold.ttf, IBMPlexMono-Regular.ttf, IBMPlexMono-Medium.ttf]
+        # Bundled, OFL-licensed: the word mark.
+        UIAppFonts: [BarlowCondensed-SemiBold.ttf]
 
   AsideKeyboard:
     type: app-extension
@@ -165,7 +165,7 @@ targets:
             PrimaryLanguage: en-US
             IsASCIICapable: false
             PrefersRightToLeft: false
-        UIAppFonts: [BarlowCondensed-SemiBold.ttf, IBMPlexMono-Regular.ttf, IBMPlexMono-Medium.ttf]
+        UIAppFonts: [BarlowCondensed-SemiBold.ttf]
 
   AsideControl:
     type: app-extension

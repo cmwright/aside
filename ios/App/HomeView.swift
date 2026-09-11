@@ -95,9 +95,9 @@ struct HomeView: View {
                 } else {
                     HStack(spacing: 10) {
                         Image(systemName: "power").font(.system(size: 14, weight: .semibold))
-                        MonoLabel("Start session", color: .white, size: 13)
+                        MonoLabel("Start session", color: problem == nil ? .white : Theme.text3, size: 13)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(problem == nil ? Color.white : Theme.text3)
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .background(problem == nil ? AnyShapeStyle(Theme.violetDisc) : AnyShapeStyle(Theme.surface2), in: Capsule())
                     .overlay(Capsule().strokeBorder(Color.white.opacity(0.18)))
@@ -153,7 +153,7 @@ struct HomeView: View {
                     }
                     .frame(width: 164, height: 164)
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
-                    .shadow(color: (listening ? Theme.live : Theme.violet).opacity(listening ? 0.45 : 0.25), radius: listening ? 30 : 22, y: listening ? 10 : 18)
+                    .shadow(color: (listening ? Theme.live : Theme.violet).opacity(listening ? 0.4 : 0.22), radius: listening ? 30 : 22, y: listening ? 10 : 18)
                     Image(systemName: heroSymbol)
                         .font(.system(size: 42, weight: .medium))
                         .foregroundStyle(problem == nil || listening ? Color.white : Theme.text3)
@@ -198,7 +198,7 @@ struct HomeView: View {
                     .transition(.blurReplace)
                 } else {
                     Text(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
-                        .font(Theme.display(30))
+                        .font(.system(size: 28, weight: .bold))
                         .foregroundStyle(Theme.text)
                         .transition(.blurReplace)
                 }

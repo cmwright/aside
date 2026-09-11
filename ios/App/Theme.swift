@@ -1,30 +1,32 @@
 import SwiftUI
 
-/// The iPhone app's look: dark surfaces with a faint violet cast, the icon's violet as the
-/// one brand colour, a hot red for live recording, and nothing else. Condensed display type
-/// for titles and the word mark, a mono face for measurements and status labels, the system
-/// font for reading. Compiled into the app and the keyboard extension.
+/// The iPhone app's look: surfaces with a faint violet cast that follow the phone's light or
+/// dark setting, the icon's violet as the one brand colour, a hot red for live recording,
+/// and nothing else. The system font everywhere except the word mark; SF Mono for
+/// measurements and status labels. Compiled into the app and the keyboard extension.
 enum Theme {
-    static let bg = Color(hex: 0x0F0F13)
-    static let surface = Color(hex: 0x17171D)
-    static let surface2 = Color(hex: 0x1F1F27)
-    static let line = Color(hex: 0x2A2A34)
-    static let line2 = Color(hex: 0x34343F)
-    static let text = Color(hex: 0xF1F0F5)
-    static let text2 = Color(hex: 0x9C9AAA)
-    static let text3 = Color(hex: 0x64626F)
-    static let violet = Color(hex: 0x8B6CF0)
+    static let bg = Color(light: 0xF4F3F8, dark: 0x0F0F13)
+    static let surface = Color(light: 0xFFFFFF, dark: 0x17171D)
+    static let surface2 = Color(light: 0xECEAF3, dark: 0x1F1F27)
+    static let line = Color(light: 0xE2E0EA, dark: 0x2A2A34)
+    static let line2 = Color(light: 0xCFCCDA, dark: 0x34343F)
+    static let text = Color(light: 0x141320, dark: 0xF1F0F5)
+    static let text2 = Color(light: 0x5E5B6E, dark: 0x9C9AAA)
+    static let text3 = Color(light: 0x8E8B9E, dark: 0x64626F)
+    static let violet = Color(light: 0x6B4FE0, dark: 0x8B6CF0)
     static let violetLight = Color(hex: 0x9F84F5)
     static let violetDeep = Color(hex: 0x5F44C4)
-    static let live = Color(hex: 0xFF5C4D)
-    static let liveDim = Color(hex: 0x5A2A28)
-    static let amber = Color(hex: 0xF2B544)
+    static let live = Color(light: 0xE6473A, dark: 0xFF5C4D)
+    static let liveDim = Color(light: 0xF5C9C4, dark: 0x5A2A28)
+    static let amber = Color(light: 0xC98A12, dark: 0xF2B544)
+    /// Drop shadows: soft in light mode, deep in dark.
+    static let shadow = Color(light: 0x000000, dark: 0x000000, lightAlpha: 0.16, darkAlpha: 0.5)
 
-    /// Barlow Condensed, bundled (OFL). Titles and the word mark.
+    /// Barlow Condensed, bundled (OFL). The word mark only.
     static func display(_ size: CGFloat) -> Font { .custom("BarlowCondensed-SemiBold", size: size) }
-    /// IBM Plex Mono, bundled (OFL). Timings, counts, status labels.
+    /// SF Mono. Timings, counts, status labels.
     static func mono(_ size: CGFloat, medium: Bool = false) -> Font {
-        .custom(medium ? "IBMPlexMono-Medium" : "IBMPlexMono-Regular", size: size)
+        .system(size: size, weight: medium ? .medium : .regular, design: .monospaced)
     }
 
     static let violetDisc = LinearGradient(colors: [violetLight, violet, violetDeep],
@@ -38,6 +40,18 @@ extension Color {
         self.init(red: Double((hex >> 16) & 0xFF) / 255,
                   green: Double((hex >> 8) & 0xFF) / 255,
                   blue: Double(hex & 0xFF) / 255)
+    }
+
+    /// One colour per appearance, resolved by the trait collection wherever it is drawn:
+    /// the app, the keyboard extension over a light or dark host, the tab bar.
+    init(light: UInt32, dark: UInt32, lightAlpha: Double = 1, darkAlpha: Double = 1) {
+        func ui(_ hex: UInt32, _ alpha: Double) -> UIColor {
+            UIColor(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255,
+                    blue: Double(hex & 0xFF) / 255, alpha: alpha)
+        }
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? ui(dark, darkAlpha) : ui(light, lightAlpha)
+        })
     }
 }
 
