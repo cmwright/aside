@@ -27,13 +27,15 @@ struct RecentView: View {
         NavigationStack {
             List {
                 ForEach(days, id: \.day) { day in
-                    Section(day.day.formatted(date: .abbreviated, time: .omitted)) {
+                    Section {
                         ForEach(day.records) { record in
                             row(record)
                         }
                         .onDelete { offsets in
                             history.remove(ids: Set(offsets.map { day.records[$0].id }))
                         }
+                    } header: {
+                        SectionHeader(day.day.formatted(date: .abbreviated, time: .omitted))
                     }
                 }
                 Section {
@@ -42,18 +44,21 @@ struct RecentView: View {
                             Text(retention.title).tag(retention)
                         }
                     }
+                } header: {
+                    SectionHeader("Retention")
                 } footer: {
                     Text(settings.historyRetention.persists
                          ? "\(history.records.count) dictations are stored on this iPhone and pruned by age. Nothing leaves the device."
                          : "The last \(DictationHistory.sessionCapacity) stay in memory until Aside is closed; nothing is written to disk.")
                 }
             }
+            .themedList()
             .searchable(text: $filter, prompt: "Search dictations")
             .navigationTitle("Recent")
             .toolbar {
                 if !history.records.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Clear", role: .destructive) { history.clear() }
+                        Button("Clear", role: .destructive) { history.clear() }.tint(Theme.live)
                     }
                 }
             }
@@ -67,39 +72,42 @@ struct RecentView: View {
     }
 
     private func row(_ record: DictationRecord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(record.date, style: .time)
-                Text("·")
-                Text(record.engineLabel)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.text2)
+                MonoLabel("\(record.source ?? "app") · \(record.sttMs) ms")
                 Spacer()
-                Button(copiedID == record.id ? "Copied" : "Copy") {
+                Button {
                     UIPasteboard.general.string = record.finalText
                     copiedID = record.id
+                } label: {
+                    Image(systemName: copiedID == record.id ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(copiedID == record.id ? Theme.violet : Theme.text3)
+                        .frame(width: 44, height: 32)
                 }
-                .font(.caption)
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .buttonStyle(.plain)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
             Text(record.finalText)
-                .font(.body)
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .foregroundStyle(Theme.text)
                 .textSelection(.enabled)
 
             if record.changed {
                 Text(record.rawText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text3)
                     .textSelection(.enabled)
             }
 
-            Text("\(record.cleanupLabel) · speech \(record.sttMs) ms · cleanup \(record.cleanupMs) ms · from the \(record.source ?? "app")")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            MonoLabel("\(record.engineLabel) · \(record.cleanupLabel) · cleanup \(record.cleanupMs) ms")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .listRowBackground(Theme.surface)
         .contextMenu {
             Button("Copy") { UIPasteboard.general.string = record.finalText }
             if record.changed {

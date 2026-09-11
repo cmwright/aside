@@ -69,6 +69,8 @@ final class PCMSink: @unchecked Sendable {
     /// Gets every converted chunk as Float samples as well, for a streaming transcriber.
     /// Called on the render thread, so it must only enqueue.
     private var listener: (@Sendable ([Float]) -> Void)?
+    /// Gets a 0...1 level per converted chunk while capturing, for a meter. Render thread.
+    private var levelListener: (@Sendable (Float) -> Void)?
 
     let outputFormat: AVAudioFormat = {
         // Force-unwrap: this combination is always supported by CoreAudio.
@@ -80,11 +82,13 @@ final class PCMSink: @unchecked Sendable {
 
     /// Starts keeping audio. `listener`, when given, receives the 16 kHz Float samples as
     /// they are captured, for a transcriber that works while the key is still held.
-    func beginCapture(listener: (@Sendable ([Float]) -> Void)? = nil) {
+    func beginCapture(listener: (@Sendable ([Float]) -> Void)? = nil,
+                      levelListener: (@Sendable (Float) -> Void)? = nil) {
         lock.lock()
         pcm.removeAll(keepingCapacity: true)
         capturing = true
         self.listener = listener
+        self.levelListener = levelListener
         lock.unlock()
     }
 
@@ -95,6 +99,7 @@ final class PCMSink: @unchecked Sendable {
         pcm = Data()
         capturing = false
         listener = nil
+        levelListener = nil
         lock.unlock()
         return out
     }
@@ -105,6 +110,7 @@ final class PCMSink: @unchecked Sendable {
         pcm = Data()
         capturing = false
         listener = nil
+        levelListener = nil
         lock.unlock()
     }
 
@@ -161,6 +167,12 @@ final class PCMSink: @unchecked Sendable {
             var floats = [Float](repeating: 0, count: frames)
             for index in 0..<frames { floats[index] = Float(channel[0][index]) / 32768 }
             listener(floats)
+        }
+        if let levelListener {
+            var sum: Float = 0
+            for index in 0..<frames { let v = Float(channel[0][index]) / 32768; sum += v * v }
+            // RMS on a square-root curve: quiet speech still moves the meter.
+            levelListener(min(1, (sum / Float(frames)).squareRoot().squareRoot() * 1.6))
         }
     }
 }

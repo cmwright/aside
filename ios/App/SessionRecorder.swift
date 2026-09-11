@@ -134,10 +134,13 @@ final class SessionRecorder {
         Log.audio.notice("Session audio engine stopped")
     }
 
+    /// Called on the render thread with a 0...1 level for every chunk of a dictation.
+    var levelHandler: (@Sendable (Float) -> Void)?
+
     func beginDictation() throws {
         guard isRunning else { throw RecorderError.notRunning }
         guard engine.isRunning else { throw RecorderError.inputNotReady(AudioTrace.currentInput) }
-        sink.beginCapture()
+        sink.beginCapture(levelListener: levelHandler)
         isDictating = true
         Log.audio.info("Dictation started")
     }

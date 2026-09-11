@@ -21,31 +21,27 @@ struct KeyboardRootView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
     }
 
     // MARK: - Status
 
     private var statusLine: some View {
-        HStack(spacing: 6) {
-            Text("Aside")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text("·").foregroundStyle(.tertiary)
+        HStack(spacing: 8) {
+            GlyphView(size: 16, color: model.state == .listening ? Theme.live : Theme.text2, live: model.state == .listening)
             if model.state.isTappableForSession {
                 // Not a Button or Link: like the keys below, a plain gesture is what
                 // reliably gets touches inside a keyboard extension.
                 Label("Start a session", systemImage: "arrow.up.forward.app")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Theme.violet)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onEnded { _ in
                         model.openApp(KeyboardModel.startSessionURL)
                     })
                     .accessibilityAddTraits(.isButton)
             } else {
-                Text(model.state.text)
-                    .font(.caption)
-                    .foregroundStyle(statusColor)
+                MonoLabel(model.state.text, color: statusColor)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
             }
@@ -56,10 +52,10 @@ struct KeyboardRootView: View {
 
     private var statusColor: Color {
         switch model.state {
-        case .error, .noFullAccess, .noAppGroup: return .red
-        case .listening: return .red
-        case .transcribing: return .orange
-        default: return .secondary
+        case .error, .noFullAccess, .noAppGroup: return Theme.live
+        case .listening: return Theme.live
+        case .transcribing: return Theme.amber
+        default: return Theme.text2
         }
     }
 
@@ -94,8 +90,8 @@ struct KeyboardRootView: View {
             }
 
             Text(micCaption)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text2)
         }
     }
 
@@ -111,26 +107,26 @@ struct KeyboardRootView: View {
 
     private var micFace: some View {
         ZStack {
+            MeterRing(size: 92, live: model.state == .listening, level: model.isLatched ? 0.6 : 0.35)
             Circle()
-                .fill(micColor)
-                .frame(width: 92, height: 92)
-                .overlay(
-                    Circle()
-                        .strokeBorder(Color.white.opacity(model.isLatched ? 0.9 : 0), lineWidth: 3)
-                )
-            Image(systemName: model.state == .listening ? "waveform" : "mic.fill")
-                .font(.system(size: 34, weight: .medium))
-                .foregroundStyle(.white)
+                .fill(micFill)
+                .frame(width: 72, height: 72)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                .shadow(color: .black.opacity(0.5), radius: 10, y: 8)
+            Image(systemName: "mic.fill")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(model.state == .noSession ? Theme.text3 : .white)
         }
+        .frame(width: 92, height: 92)
         .contentShape(Circle())
     }
 
-    private var micColor: Color {
+    private var micFill: AnyShapeStyle {
         switch model.state {
-        case .listening: return .red
-        case .transcribing: return .orange
-        case .noSession: return .gray
-        default: return .accentColor
+        case .listening: return AnyShapeStyle(Theme.liveDisc)
+        case .transcribing: return AnyShapeStyle(Theme.amber)
+        case .noSession: return AnyShapeStyle(Theme.surface2)
+        default: return AnyShapeStyle(Theme.violetDisc)
         }
     }
 
@@ -140,7 +136,7 @@ struct KeyboardRootView: View {
              : "Turn on Allow Full Access in Settings > General > Keyboard > Keyboards > Aside. Aside needs it to reach the app that does the recording.")
             .font(.caption)
             .multilineTextAlignment(.center)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Theme.text2)
             .padding(.horizontal, 12)
     }
 
@@ -172,13 +168,14 @@ private struct KeyButton: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(.secondarySystemBackground).opacity(pressed ? 0.5 : 1))
-                .shadow(color: .black.opacity(0.15), radius: 0, y: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(pressed ? Theme.line2 : Theme.surface2)
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+                .shadow(color: .black.opacity(0.5), radius: 0, y: 1)
             if let title {
-                Text(title).font(.system(size: 16))
+                Text(title).font(.system(size: 16)).foregroundStyle(Theme.text)
             } else if let systemImage {
-                Image(systemName: systemImage).font(.system(size: 17))
+                Image(systemName: systemImage).font(.system(size: 17)).foregroundStyle(Theme.text)
             }
         }
         .frame(width: width)

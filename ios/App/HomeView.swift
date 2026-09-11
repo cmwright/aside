@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Session status, the session button, and a hold-to-talk button that works on its own so
-/// the pipeline can be exercised without ever enabling the keyboard.
+/// The instrument panel: word mark and session state up top, the mic control inside its
+/// meter ring, the level strip, and the last result. The talk button works on its own, with
+/// or without a session, so the pipeline can be exercised without ever enabling the keyboard.
 struct HomeView: View {
     @EnvironmentObject private var controller: SessionController
     @EnvironmentObject private var phone: PhoneSettings
@@ -12,91 +13,92 @@ struct HomeView: View {
     @Environment(\.openURL) private var openURL
     @State private var holding = false
     @State private var copied = false
+    @State private var listeningSince: Date?
 
     private var problem: SessionController.ConfigurationProblem? { controller.configurationProblem() }
+    private var listening: Bool { controller.phase == .listening }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    if let banner = controller.banner {
-                        bannerView(banner)
+                VStack(spacing: 0) {
+                    header
+                    VStack(spacing: 12) {
+                        if let banner = controller.banner { bannerView(banner) }
+                        if !controller.appGroupAvailable {
+                            warning("The app group is not available in this build, so the keyboard cannot reach the app. Run the app from Xcode with your own team so it gets the App Group entitlement.")
+                        }
+                        if let problem { configurationCard(problem) }
                     }
-                    if !controller.appGroupAvailable {
-                        warning("The app group is not available in this build, so the keyboard cannot reach the app. Run the app from Xcode with your own team so it gets the App Group entitlement.")
-                    }
-                    if let problem { configurationCard(problem) }
-                    sessionCard
-                    talkCard
-                    if !controller.lastText.isEmpty { lastResultCard }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    hero
+                    levels
+                    if !controller.lastText.isEmpty { lastResultCard.padding(.horizontal, 20).padding(.top, 22) }
                 }
-                .padding()
+                .padding(.bottom, 24)
             }
-            .navigationTitle("Aside")
+            .background(Theme.bg)
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .onChange(of: controller.phase) { _, phase in
+            listeningSince = phase == .listening ? Date() : nil
         }
     }
 
-    // MARK: - Session
+    // MARK: - Header
 
-    private var sessionCard: some View {
-        Card {
-            HStack {
-                Circle()
-                    .fill(controller.isSessionActive ? Color.green : Color.secondary.opacity(0.4))
-                    .frame(width: 10, height: 10)
-                Text(controller.sessionStatus)
-                    .font(.headline)
-                Spacer()
-            }
-            Text(controller.isSessionActive
-                 ? "The microphone is live. Switch to the Aside keyboard in any app and hold its mic button, or tap the Aside control in Control Center to dictate to the clipboard."
-                 : "Start a session, then switch to the Aside keyboard in whatever app you are typing in, or tap the Aside control in Control Center.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
+    private var header: some View {
+        HStack {
+            Wordmark(height: 18)
+            Spacer()
             Button {
                 controller.banner = nil
                 if controller.isSessionActive { controller.endSession() } else { controller.startSession() }
             } label: {
-                Text(controller.isSessionActive ? "End Session" : "Start Session")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                if controller.isSessionActive {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Pill(text: "Session · \(remaining(at: context.date))", dot: Theme.violet)
+                    }
+                } else {
+                    Pill(text: "Start session", dot: Theme.text3, textColor: Theme.text)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(controller.isSessionActive ? .red : .accentColor)
+            .buttonStyle(.plain)
             .disabled(problem != nil && !controller.isSessionActive)
-
-            Text("Session length: \(phone.sessionLength.title) — change it in Settings.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .accessibilityLabel(controller.isSessionActive ? "End session" : "Start session")
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
     }
 
-    // MARK: - Hold to talk
+    private func remaining(at now: Date) -> String {
+        guard let expiresAt = controller.session?.expiresAt else { return "until ended" }
+        let seconds = max(0, Int(expiresAt.timeIntervalSince(now)))
+        return String(format: "%d:%02d left", seconds / 60, seconds % 60)
+    }
 
-    private var talkCard: some View {
-        Card {
-            Text(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
-                .font(.headline)
-            Text("Works right here, with or without a session.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+    // MARK: - Hero
 
+    private var hero: some View {
+        VStack(spacing: 14) {
             Button {
                 // Everything happens in the gesture below; the button is the hit target.
             } label: {
                 ZStack {
+                    MeterRing(size: 208, live: listening, level: controller.levels.last ?? 0)
                     Circle()
-                        .fill(holding || controller.phase == .listening ? Color.red : (problem == nil ? Color.accentColor : Color.secondary.opacity(0.4)))
-                        .frame(width: 110, height: 110)
-                    Image(systemName: holding || controller.phase == .listening ? "waveform" : "mic.fill")
-                        .font(.system(size: 40, weight: .medium))
-                        .foregroundStyle(.white)
+                        .fill(listening ? AnyShapeStyle(Theme.liveDisc)
+                              : problem == nil ? AnyShapeStyle(Theme.violetDisc) : AnyShapeStyle(Theme.surface2))
+                        .frame(width: 164, height: 164)
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.5), radius: 22, y: 18)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 42, weight: .medium))
+                        .foregroundStyle(problem == nil || listening ? Color.white : Theme.text3)
                 }
             }
             .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
             .disabled(problem != nil)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
@@ -114,21 +116,89 @@ struct HomeView: View {
             )
             .accessibilityLabel(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
 
-            Text(problem == nil || controller.phase != .idle ? controller.phase.label : "Not ready")
-                .font(.subheadline)
-                .foregroundStyle(phaseColor)
-                .frame(maxWidth: .infinity)
-                .multilineTextAlignment(.center)
+            VStack(spacing: 6) {
+                MonoLabel(statusText, color: statusColor, size: 12)
+                if listening {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(elapsed(at: context.date))
+                            .font(Theme.mono(28, medium: true))
+                            .tracking(1)
+                            .foregroundStyle(Theme.text)
+                    }
+                } else {
+                    Text(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
+                        .font(Theme.display(30))
+                        .foregroundStyle(Theme.text)
+                }
+                Text(hint)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 32)
+        }
+        .padding(.top, 30)
+    }
+
+    private var statusText: String {
+        switch controller.phase {
+        case .idle: return problem == nil ? "Ready" : "Not ready"
+        case .listening: return "Listening"
+        case .processing: return "Transcribing"
+        case .failed(let message): return message
         }
     }
 
-    private var phaseColor: Color {
+    private var statusColor: Color {
         switch controller.phase {
-        case .failed: return .red
-        case .listening: return .red
-        case .processing: return .orange
-        case .idle: return .secondary
+        case .idle: return Theme.text2
+        case .listening: return Theme.live
+        case .processing: return Theme.amber
+        case .failed: return Theme.live
         }
+    }
+
+    private var hint: String {
+        if listening {
+            return settings.tapBehavior == .latch ? "Tap again to stop and send" : "Let go to stop and send"
+        }
+        switch settings.tapBehavior {
+        case .latch: return "Keeps listening until you tap again. Holding works too."
+        case .doubleTapLatches: return "Hold, speak, let go. Double-tap to keep listening."
+        case .send: return "Hold, speak, let go."
+        }
+    }
+
+    private func elapsed(at now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(listeningSince ?? now)))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    // MARK: - Levels
+
+    private var levels: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                MonoLabel("Input")
+                Spacer()
+                MonoLabel(AudioTrace.currentInput, color: Theme.text2)
+            }
+            LevelStrip(values: controller.levels, color: listening ? Theme.live : Theme.line2)
+            Text(sessionNote)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 26)
+    }
+
+    private var sessionNote: String {
+        controller.isSessionActive
+            ? "The microphone stays live for the Aside keyboard and the Control Center control. \(phone.sessionLength.title) per session; change it in Settings."
+            : "Start a session to dictate from the Aside keyboard in any app, or from Control Center."
     }
 
     // MARK: - Last result
@@ -136,20 +206,24 @@ struct HomeView: View {
     private var lastResultCard: some View {
         Card {
             HStack {
-                Text("Last result").font(.headline)
+                MonoLabel("Last result", color: Theme.text2)
                 Spacer()
-                Button(copied ? "Copied" : "Copy") {
+                Button {
                     UIPasteboard.general.string = controller.lastText
                     copied = true
+                } label: {
+                    Pill(text: copied ? "Copied" : "Copy", systemImage: "doc.on.doc", textColor: Theme.text)
                 }
-                .font(.subheadline)
+                .buttonStyle(.plain)
             }
             Text(controller.lastText)
-                .font(.body)
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             if let summary = controller.lastSummary {
-                Text(summary).font(.caption).foregroundStyle(.secondary)
+                MonoLabel(summary)
             }
         }
     }
@@ -160,14 +234,14 @@ struct HomeView: View {
     /// FluidAudio's byte count for the file it is fetching, not an animation.
     private func configurationCard(_ problem: SessionController.ConfigurationProblem) -> some View {
         Card {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Not ready to dictate").font(.headline)
+                    MonoLabel("Not ready to dictate", color: Theme.amber, size: 12)
                     if problem.fix != .wait {
                         Text(problem.message)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.text2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     switch problem.fix {
@@ -196,28 +270,32 @@ struct HomeView: View {
 
     private func bannerView(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "arrow.uturn.backward.circle")
+            Image(systemName: "arrow.uturn.backward.circle").foregroundStyle(Theme.violet)
             Text(text).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button {
                 controller.banner = nil
             } label: {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.text3)
             }
         }
         .font(.footnote)
+        .foregroundStyle(Theme.text)
         .padding()
-        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
     }
 
     private func warning(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber)
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
         .font(.footnote)
+        .foregroundStyle(Theme.text)
         .padding()
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
     }
 }
 
@@ -232,29 +310,16 @@ struct ModelLoadingView: View {
                 if !isDownloading { ProgressView().controlSize(.small) }
                 Text(progress?.label ?? "Loading Parakeet v3…")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.text2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isDownloading, let progress {
                 ProgressView(value: progress.downloadFraction)
                     .progressViewStyle(.linear)
+                    .tint(Theme.violet)
             }
         }
     }
 
     private var isDownloading: Bool { progress?.stage == .downloading }
-}
-
-/// A plain rounded panel, so the four screens look like one app.
-struct Card<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
 }

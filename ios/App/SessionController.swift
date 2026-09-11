@@ -58,6 +58,8 @@ final class SessionController: ObservableObject {
     @Published private(set) var session: SessionState?
     @Published private(set) var lastText: String = ""
     @Published private(set) var lastSummary: String?
+    /// Input level per chunk of the current or last dictation, newest last; feeds the meters.
+    @Published private(set) var levels: [Float] = []
     /// Shown at the top of Home after the keyboard sent us here to start a session.
     @Published var banner: String?
     /// Text a Control Center dictation produced while another app was in front. iOS drops
@@ -113,6 +115,9 @@ final class SessionController: ObservableObject {
         if ipc.readSession()?.active == true { try? ipc.endSession() }
         self.session = ipc.readSession()
         self.pendingClipboardText = try? String(contentsOf: SessionController.pendingClipboardURL, encoding: .utf8)
+        recorder.levelHandler = { [weak self] level in
+            Task { @MainActor in self?.pushLevel(level) }
+        }
         // The one reliable "we are in front now" signal: SwiftUI's scene phase is still
         // inactive when views first appear, and its change handler skips the initial value.
         activeObserver = NotificationCenter.default.addObserver(
@@ -526,10 +531,18 @@ final class SessionController: ObservableObject {
         beginDictation(origin: .app)
     }
 
+    private static let levelHistory = 40
+
+    private func pushLevel(_ level: Float) {
+        levels.append(level)
+        if levels.count > SessionController.levelHistory { levels.removeFirst(levels.count - SessionController.levelHistory) }
+    }
+
     private func beginDictation(origin: Origin) {
         // A second `start` with one already running replaces it; do not let that release
         // the audio engine on the way through, we are about to use it.
         if current != nil { discardCurrent() }
+        levels = []
         do {
             try recorder.beginDictation()
         } catch {

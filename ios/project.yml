@@ -115,6 +115,8 @@ targets:
         # the background, which is the whole point of "Start Session".
         UIBackgroundModes: [audio]
         NSMicrophoneUsageDescription: "Aside records your voice while you hold the mic button, and transcribes it on this iPhone or at the provider you chose."
+        # Bundled, OFL-licensed: the word mark and titles, and the meter labels.
+        UIAppFonts: [BarlowCondensed-SemiBold.ttf, IBMPlexMono-Regular.ttf, IBMPlexMono-Medium.ttf]
 
   AsideKeyboard:
     type: app-extension
@@ -129,6 +131,10 @@ targets:
       - path: Shared
       # The gesture state machine, shared with the Mac trigger. Foundation only.
       - path: ../mac/Sources/Trigger.swift
+      # Colours, fonts, the glyph and the meter ring; SwiftUI only.
+      - path: App/Theme.swift
+      - path: App/Fonts
+        buildPhase: resources
     entitlements:
       path: AsideKeyboard.entitlements
       properties:
@@ -159,6 +165,7 @@ targets:
             PrimaryLanguage: en-US
             IsASCIICapable: false
             PrefersRightToLeft: false
+        UIAppFonts: [BarlowCondensed-SemiBold.ttf, IBMPlexMono-Regular.ttf, IBMPlexMono-Medium.ttf]
 
   AsideControl:
     type: app-extension

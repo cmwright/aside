@@ -34,14 +34,14 @@ struct PhoneSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Speech to text")
+                    SectionHeader("Speech to text")
                 } footer: {
                     if settings.transcriptionMode == .local {
                         Text("Runs offline on the Neural Engine after a one-time ~600 MB download.")
                     }
                 }
 
-                Section("Cleanup") {
+                Section(header: SectionHeader("Cleanup")) {
                     Picker("Level", selection: $settings.cleanup) {
                         Text("None — raw transcript").tag(CleanupLevel.none)
                         Text("Light — punctuation, dictionary").tag(CleanupLevel.light)
@@ -85,7 +85,7 @@ struct PhoneSettingsView: View {
                         ForEach(TriggerLogic.TapBehavior.allCases) { Text($0.title).tag($0) }
                     }
                 } header: {
-                    Text("Mic button")
+                    SectionHeader("Mic button")
                 } footer: {
                     Text("For the keyboard's mic button and the one on the Home tab. Holding always works: hold, speak, let go.")
                 }
@@ -97,7 +97,7 @@ struct PhoneSettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Session")
+                    SectionHeader("Session")
                 } footer: {
                     Text("A session keeps the microphone alive in the background so the keyboard and the Control Center control can dictate without another app switch. Changing this applies to the next session.")
                 }
@@ -114,7 +114,7 @@ struct PhoneSettingsView: View {
                         Button("Clear") { AudioTrace.clear() }
                     }
                 } header: {
-                    Text("Microphone")
+                    SectionHeader("Microphone")
                 } footer: {
                     Text("Which input the session runs on and what happened when it changed, for example when AirPods connected. Bluetooth headsets are used through their hands-free profile, so their microphone works, and the phone needs a moment to switch them over.")
                 }
@@ -129,11 +129,12 @@ struct PhoneSettingsView: View {
                         Text(trace.summary).font(.footnote).foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("Control Center")
+                    SectionHeader("Control Center")
                 } footer: {
                     Text("A dictation started from the Aside control is copied to the clipboard for you to paste, when Aside comes to the front (tap the notification). iOS clears it at this deadline. For copying without opening Aside, run the Dictate with Aside shortcut action followed by Copy to Clipboard.")
                 }
             }
+            .themedList()
             .navigationTitle("Settings")
             .onChange(of: settings.transcriptionMode) { _, _ in controller.prepareEngines() }
             .onChange(of: settings.cleanupEngine) { _, _ in controller.prepareEngines() }
@@ -215,7 +216,7 @@ private struct DirectProviderSection: View {
                 Text(status).font(.footnote).foregroundStyle(.secondary)
             }
         } header: {
-            Text(title)
+            SectionHeader(title)
         } footer: {
             Text(stt
                  ? "Audio is posted straight to this provider from your phone. Leave the model and base URL empty to use the provider's defaults."

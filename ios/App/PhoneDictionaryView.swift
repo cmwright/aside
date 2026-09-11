@@ -18,17 +18,23 @@ struct PhoneDictionaryView: View {
                                 Text(entry.term.isEmpty ? "(empty)" : entry.term)
                                     .foregroundStyle(entry.term.isEmpty ? .secondary : .primary)
                                 if let replacement = entry.wire.replacement {
-                                    Text("→ \(replacement)")
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.text3)
+                                        Text(replacement).font(Theme.mono(13)).foregroundStyle(Theme.violet)
+                                    }
+                                } else {
+                                    MonoLabel("Spelling")
                                 }
                             }
                         }
                         .foregroundStyle(.primary)
+                        .listRowBackground(Theme.surface)
                     }
                     .onDelete { offsets in
                         store.remove(ids: Set(offsets.map { store.entries[$0].id }))
                     }
+                } header: {
+                    SectionHeader("\(store.entries.count) entries · shared with the Mac app")
                 } footer: {
                     Text("A term on its own teaches the spelling. Add a replacement to rewrite what was heard — \"acme cloud\" → \"AcmeCloud\".")
                 }
@@ -36,6 +42,7 @@ struct PhoneDictionaryView: View {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
             }
+            .themedList()
             .navigationTitle("Dictionary")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

@@ -20,6 +20,8 @@ struct AsideApp: App {
                 // `onChange(of: scenePhase)` does not fire for the initial value, so a cold
                 // launch also has to look for a session or commands left by an extension.
                 .task { controller.refresh() }
+                .preferredColorScheme(.dark)
+                .tint(Theme.violet)
         }
         .onChange(of: scenePhase) { _, phase in
             // A session can expire while the app is suspended; catch up on the way back in.
@@ -38,7 +40,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         for (name, value) in ProcessInfo.processInfo.environment where name.hasPrefix("ASIDE_SEED_KEY_") {
             APIKeyStore.set(value, for: String(name.dropFirst("ASIDE_SEED_KEY_".count)).lowercased())
         }
+        // SIMCTL_CHILD_ASIDE_TAB=settings|recent|dictionary opens on that tab, for screenshots.
+        let tabs: [String: SessionController.Tab] = ["home": .home, "dictionary": .dictionary, "settings": .settings, "recent": .recent]
+        if let tab = ProcessInfo.processInfo.environment["ASIDE_TAB"].flatMap({ tabs[$0] }) {
+            MainActor.assumeIsolated { SessionController.shared.selectedTab = tab }
+        }
         #endif
+        // Screen titles in the word mark's face; everything else stays system type.
+        if let large = UIFont(name: "BarlowCondensed-SemiBold", size: 34),
+           let small = UIFont(name: "BarlowCondensed-SemiBold", size: 20) {
+            let bar = UINavigationBar.appearance()
+            bar.largeTitleTextAttributes = [.font: large, .foregroundColor: UIColor(Theme.text)]
+            bar.titleTextAttributes = [.font: small, .foregroundColor: UIColor(Theme.text)]
+        }
         MainActor.assumeIsolated {
             SessionController.shared.prepareEngines()
             Log.app.info("Aside for iPhone launched")
