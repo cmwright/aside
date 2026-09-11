@@ -80,4 +80,4 @@ from them.
 ## Changes and contact
 
 If this policy changes, the new version will be published at this address with a new
-date. Questions: [your contact email].
+date. Questions: open an issue at https://github.com/cmwright/aside/issues.
