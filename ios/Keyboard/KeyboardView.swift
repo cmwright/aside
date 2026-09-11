@@ -21,7 +21,6 @@ struct KeyboardRootView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
     }
 
     // MARK: - Status
@@ -180,8 +179,7 @@ private struct KeyButton: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
-                .fill(pressed ? Theme.line2 : Theme.surface2)
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+                .fill(pressed ? Theme.line2 : Theme.surface)
                 .shadow(color: Theme.shadow, radius: 0, y: 1)
             if let title {
                 Text(title).font(.system(size: 16)).foregroundStyle(Theme.text)

@@ -137,6 +137,11 @@ final class SessionRecorder {
     /// Called on the render thread with a 0...1 level for every chunk of a dictation.
     var levelHandler: (@Sendable (Float) -> Void)?
 
+    /// True once the engine is actually pulling audio. Right after `startSession` it can
+    /// be false for a moment (the audio session just activated, a Bluetooth headset is
+    /// switching profiles) while the engine is retried in the background.
+    var isInputReady: Bool { isRunning && engine.isRunning }
+
     func beginDictation() throws {
         guard isRunning else { throw RecorderError.notRunning }
         guard engine.isRunning else { throw RecorderError.inputNotReady(AudioTrace.currentInput) }

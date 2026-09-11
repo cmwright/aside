@@ -16,6 +16,8 @@ final class SessionController: ObservableObject {
 
     enum Phase: Equatable {
         case idle
+        /// The talk button was pressed before the engine was pulling audio; waiting for it.
+        case starting
         case listening
         case processing
         case failed(String)
@@ -23,6 +25,7 @@ final class SessionController: ObservableObject {
         var label: String {
             switch self {
             case .idle: return "Ready"
+            case .starting: return "Starting the microphone…"
             case .listening: return "Listening…"
             case .processing: return "Transcribing…"
             case .failed(let message): return message
@@ -93,6 +96,8 @@ final class SessionController: ObservableObject {
     /// The Home tab's talk button, run through the same gesture logic as the keyboard.
     private var talkTrigger = TriggerLogic()
     private var talkTapWindowTask: Task<Void, Never>?
+    /// Waiting for the engine to come up after a talk-button press with no session running.
+    private var talkStartTask: Task<Void, Never>?
     private var current: Origin?
     private var lastControlRecording = false
 
@@ -472,17 +477,21 @@ final class SessionController: ObservableObject {
     /// The in-app talk button: hold, or tap according to the tap setting. Starts the audio
     /// engine on its own when no session is running, so the app is useful without ever
     /// enabling the keyboard.
-    func pushToTalkDown() {
+    ///
+    /// `time` is the touch event's own timestamp. Starting the engine here blocks the main
+    /// thread for a few hundred milliseconds, so the release handler runs late; timed by the
+    /// clock at that point, a tap read as a hold and ended the dictation as "too short".
+    func pushToTalkDown(at time: TimeInterval = Date().timeIntervalSinceReferenceDate) {
         talkTrigger.tapBehavior = settings.tapBehavior
         talkTapWindowTask?.cancel()
         // A latched dictation that ended some other way (watchdog, failure) must not turn
         // this press into a "stop".
-        if talkTrigger.latched, phase != .listening { talkTrigger.reset() }
-        switch talkTrigger.keyDown(at: Date().timeIntervalSinceReferenceDate) {
+        if talkTrigger.latched, phase != .listening, phase != .starting { talkTrigger.reset() }
+        switch talkTrigger.keyDown(at: time) {
         case .start:
             startPushToTalk()
         case .stopLatched:
-            endDictationAndProcess()
+            if talkStartTask != nil { abandonTalkStart() } else { endDictationAndProcess() }
         case .latch:
             objectWillChange.send()
         default:
@@ -490,10 +499,11 @@ final class SessionController: ObservableObject {
         }
     }
 
-    func pushToTalkUp() {
-        switch talkTrigger.keyUp(at: Date().timeIntervalSinceReferenceDate) {
+    func pushToTalkUp(at time: TimeInterval = Date().timeIntervalSinceReferenceDate) {
+        switch talkTrigger.keyUp(at: time) {
         case .send:
-            endDictationAndProcess()
+            // A hold that ended before the engine came up recorded nothing; drop it.
+            if talkStartTask != nil { abandonTalkStart() } else { endDictationAndProcess() }
         case .tapPending:
             scheduleTalkTapWindow()
         case .latch:
@@ -528,7 +538,37 @@ final class SessionController: ObservableObject {
                 return
             }
         }
-        beginDictation(origin: .app)
+        guard !recorder.isInputReady else {
+            beginDictation(origin: .app)
+            return
+        }
+        // With no session running the engine was started just now and may not be pulling
+        // audio yet. Refusing the tap here used to show as a red "not ready" flash that
+        // read as recording; wait for the input instead, then begin.
+        phase = .starting
+        talkStartTask?.cancel()
+        talkStartTask = Task { @MainActor [weak self] in
+            for _ in 0..<50 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled else { return }
+                if self.recorder.isInputReady {
+                    self.talkStartTask = nil
+                    self.beginDictation(origin: .app)
+                    return
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.talkStartTask = nil
+            self.fail("The microphone (\(AudioTrace.currentInput)) did not start. Try again.", origin: .app)
+        }
+    }
+
+    private func abandonTalkStart() {
+        talkStartTask?.cancel()
+        talkStartTask = nil
+        talkTrigger.reset()
+        phase = .idle
+        idleIfStandalone()
     }
 
     private static let levelHistory = 40

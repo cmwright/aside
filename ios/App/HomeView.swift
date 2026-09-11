@@ -146,8 +146,8 @@ struct HomeView: View {
                     }
                     // Three discs crossfade rather than one gradient jumping.
                     ZStack {
-                        Circle().fill(Theme.surface2).opacity(problem != nil && !listening ? 1 : 0)
-                        Circle().fill(Theme.violetDisc).opacity(problem == nil && controller.phase == .idle ? 1 : 0)
+                        Circle().fill(Theme.surface2).opacity((problem != nil && !listening) || isFailed ? 1 : 0)
+                        Circle().fill(Theme.violetDisc).opacity(problem == nil && !isFailed && (controller.phase == .idle || controller.phase == .starting) ? 1 : 0)
                         Circle().fill(Theme.amber).opacity(controller.phase == .processing ? 1 : 0)
                         Circle().fill(Theme.liveDisc).opacity(listening ? 1 : 0)
                     }
@@ -156,9 +156,10 @@ struct HomeView: View {
                     .shadow(color: (listening ? Theme.live : Theme.violet).opacity(listening ? 0.4 : 0.22), radius: listening ? 30 : 22, y: listening ? 10 : 18)
                     Image(systemName: heroSymbol)
                         .font(.system(size: 42, weight: .medium))
-                        .foregroundStyle(problem == nil || listening ? Color.white : Theme.text3)
+                        .foregroundStyle((problem == nil || listening) && !isFailed ? Color.white : Theme.text3)
                         .contentTransition(.symbolEffect(.replace.downUp))
                         .symbolEffect(.variableColor.iterative.reversing, isActive: listening)
+                        .symbolEffect(.pulse, isActive: controller.phase == .starting)
                         .symbolEffect(.variableColor.iterative, isActive: controller.phase == .processing)
                 }
                 .scaleEffect(holding ? 0.94 : 1)
@@ -169,16 +170,16 @@ struct HomeView: View {
             .disabled(problem != nil)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
+                    .onChanged { value in
                         guard !holding, problem == nil else { return }
                         holding = true
                         copied = false
-                        controller.pushToTalkDown()
+                        controller.pushToTalkDown(at: value.time.timeIntervalSinceReferenceDate)
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
                         guard holding else { return }
                         holding = false
-                        controller.pushToTalkUp()
+                        controller.pushToTalkUp(at: value.time.timeIntervalSinceReferenceDate)
                     }
             )
             .accessibilityLabel(settings.tapBehavior == .latch ? "Tap to talk" : "Hold to talk")
@@ -220,13 +221,20 @@ struct HomeView: View {
         switch controller.phase {
         case .listening: return "waveform"
         case .processing: return "ellipsis"
-        case .idle, .failed: return "mic.fill"
+        case .failed: return "exclamationmark"
+        case .idle, .starting: return "mic.fill"
         }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = controller.phase { return true }
+        return false
     }
 
     private var statusText: String {
         switch controller.phase {
         case .idle: return problem == nil ? "Ready" : "Not ready"
+        case .starting: return "Starting the microphone"
         case .listening: return "Listening"
         case .processing: return "Transcribing"
         case .failed(let message): return message
@@ -236,6 +244,7 @@ struct HomeView: View {
     private var statusColor: Color {
         switch controller.phase {
         case .idle: return Theme.text2
+        case .starting: return Theme.amber
         case .listening: return Theme.live
         case .processing: return Theme.amber
         case .failed: return Theme.live

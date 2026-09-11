@@ -44,6 +44,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         if let tab = ProcessInfo.processInfo.environment["ASIDE_TAB"].flatMap({ tabs[$0] }) {
             MainActor.assumeIsolated { SessionController.shared.selectedTab = tab }
         }
+        // SIMCTL_CHILD_ASIDE_DEBUG_TALK=1 taps the Home talk button twice, three seconds
+        // apart, once the engines are ready: the no-session dictation path, on a simulator.
+        if ProcessInfo.processInfo.environment["ASIDE_DEBUG_TALK"] == "1" {
+            Task { @MainActor in
+                let controller = SessionController.shared
+                while controller.configurationProblem() != nil { try? await Task.sleep(for: .seconds(1)) }
+                try? await Task.sleep(for: .seconds(1))
+                // Event-stamped like a real touch: a 60 ms tap, whatever the handlers cost.
+                var t = Date().timeIntervalSinceReferenceDate
+                Log.app.notice("debug talk: tap 1")
+                controller.pushToTalkDown(at: t); controller.pushToTalkUp(at: t + 0.06)
+                try? await Task.sleep(for: .seconds(3))
+                Log.app.notice("debug talk: tap 2, phase \(String(describing: controller.phase), privacy: .public)")
+                t = Date().timeIntervalSinceReferenceDate
+                controller.pushToTalkDown(at: t); controller.pushToTalkUp(at: t + 0.06)
+            }
+        }
         #endif
         MainActor.assumeIsolated {
             SessionController.shared.prepareEngines()
