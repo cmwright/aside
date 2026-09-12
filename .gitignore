@@ -36,3 +36,6 @@ mac/.build/
 mac/Signing.xcconfig
 ios/Signing.xcconfig
 ios/build-device/
+
+# Generated Messages extension metadata
+ios/Messages/Info.plist

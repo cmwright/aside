@@ -256,7 +256,35 @@ actor ParakeetEngine {
     func load(onDownload: @escaping ProgressHandler, onLoad: @escaping ProgressHandler) async throws {
         if manager != nil { return }
         let started = Date()
+        #if os(iOS)
+        let directory: URL
+        if let shared = AsideIPC.containerURL() {
+            let original = AsrModels.defaultCacheDirectory(for: .v3)
+            let sharedParent = shared.appendingPathComponent("SpeechModels", isDirectory: true)
+            let sharedModels = sharedParent.appendingPathComponent(original.lastPathComponent, isDirectory: true)
+            let fm = FileManager.default
+            let isExtension = Bundle.main.bundleURL.pathExtension == "appex"
+            if isExtension {
+                guard AsrModels.modelsExist(at: sharedModels, version: .v3) else {
+                    throw LocalTranscriberError.modelUnavailable("Open Aside once to prepare the speech model for Messages, then return here.")
+                }
+                directory = sharedModels
+            } else {
+                try fm.createDirectory(at: sharedParent, withIntermediateDirectories: true)
+                if !fm.fileExists(atPath: sharedModels.path), AsrModels.modelsExist(at: original, version: .v3) {
+                    let staging = sharedParent.appendingPathComponent("migration-" + UUID().uuidString)
+                    defer { try? fm.removeItem(at: staging) }
+                    try fm.copyItem(at: original, to: staging)
+                    try fm.moveItem(at: staging, to: sharedModels)
+                }
+                directory = try await AsrModels.download(to: sharedModels, version: .v3, progressHandler: onDownload)
+            }
+        } else {
+            directory = try await AsrModels.download(version: .v3, progressHandler: onDownload)
+        }
+        #else
         let directory = try await AsrModels.download(version: .v3, progressHandler: onDownload)
+        #endif
         let models = try await AsrModels.load(from: directory, version: .v3, progressHandler: onLoad)
         let asr = AsrManager(config: .default)
         try await asr.loadModels(models)

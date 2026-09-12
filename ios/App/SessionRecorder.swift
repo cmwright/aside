@@ -4,6 +4,7 @@ import Foundation
 enum RecorderError: LocalizedError {
     case microphoneDenied
     case needsMicrophonePrompt
+    case activationFailed(String)
     case engineFailed(String)
     case inputNotReady(String)
     case notRunning
@@ -15,6 +16,8 @@ enum RecorderError: LocalizedError {
             return "Microphone access is off. Turn it on in Settings > Aside > Microphone."
         case .needsMicrophonePrompt:
             return "Allow microphone access, then start the session again."
+        case .activationFailed:
+            return "The microphone is busy or not ready. Tap Record to try again."
         case .engineFailed(let message):
             return "Could not start the microphone: \(message)"
         case .inputNotReady(let input):
@@ -48,6 +51,9 @@ final class SessionRecorder {
     private var interrupted = false
     private var resumeTask: Task<Void, Never>?
     private var rebuildTask: Task<Void, Never>?
+    // Audio activation posts route changes after engine.start returns. Do not
+    // accept a dictation until those notifications and rebuilds have settled.
+    private var readyAfter = Date.distantFuture
 
     var capturedSeconds: Double { sink.capturedSeconds }
 
@@ -98,8 +104,9 @@ final class SessionRecorder {
                                          options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker])
             try audioSession.setActive(true, options: [])
         } catch {
-            AudioTrace.write("session activation failed: \(error.localizedDescription)")
-            throw RecorderError.engineFailed(error.localizedDescription)
+            let failure = error as NSError
+            AudioTrace.write("session activation failed: \(failure.domain) \(failure.code): \(failure.localizedDescription)")
+            throw RecorderError.activationFailed(failure.localizedDescription)
         }
 
         installObservers()
@@ -120,6 +127,7 @@ final class SessionRecorder {
     func stopSession() {
         guard isRunning else { return }
         isRunning = false
+        readyAfter = .distantFuture
         isDictating = false
         interrupted = false
         resumeTask?.cancel()
@@ -140,12 +148,13 @@ final class SessionRecorder {
     /// True once the engine is actually pulling audio. Right after `startSession` it can
     /// be false for a moment (the audio session just activated, a Bluetooth headset is
     /// switching profiles) while the engine is retried in the background.
-    var isInputReady: Bool { isRunning && engine.isRunning }
+    var isInputReady: Bool { isRunning && engine.isRunning && !interrupted && Date() >= readyAfter }
 
     func beginDictation() throws {
         guard isRunning else { throw RecorderError.notRunning }
-        guard engine.isRunning else { throw RecorderError.inputNotReady(AudioTrace.currentInput) }
+        guard isInputReady else { throw RecorderError.inputNotReady(AudioTrace.currentInput) }
         sink.beginCapture(levelListener: levelHandler)
+        AudioTrace.write("dictation capture began after input settled")
         isDictating = true
         Log.audio.info("Dictation started")
     }
@@ -156,6 +165,7 @@ final class SessionRecorder {
         isDictating = false
         let pcm = sink.endCapture()
         let seconds = WAV.duration(ofPCM16: pcm.count)
+        AudioTrace.write("dictation ended: \(pcm.count) PCM bytes, \(seconds) seconds")
         Log.audio.info("Dictation stopped: \(seconds, format: .fixed(precision: 2), privacy: .public)s")
         guard seconds >= SessionRecorder.minimumDuration else { throw RecorderError.tooShort }
         return WAV.file(pcm16: pcm)
@@ -190,6 +200,7 @@ final class SessionRecorder {
         engine.prepare()
         do {
             try engine.start()
+            readyAfter = Date().addingTimeInterval(0.5)
             AudioTrace.write("engine running: \(route), \(Int(format.sampleRate)) Hz × \(format.channelCount)")
         } catch {
             input.removeTap(onBus: 0)
@@ -242,6 +253,7 @@ final class SessionRecorder {
     /// failed start is an error, not a crash. A dictation in flight cannot survive the
     /// gap, so it is dropped.
     private func restartEngine(reason: String, firstDelay: Duration) {
+        readyAfter = .distantFuture
         rebuildTask?.cancel()
         rebuildTask = Task { @MainActor [weak self] in
             for attempt in 1...6 {

@@ -136,13 +136,17 @@ final class DictationHistory: ObservableObject {
 
     var retention: HistoryRetention { settings.historyRetention }
 
-    func add(_ record: DictationRecord) {
+    @discardableResult
+    func add(_ record: DictationRecord) -> Bool {
+        records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
+        records.sort { $0.date > $1.date }
         prune()
-        save()
+        let saved = save()
         #if os(macOS)
         if settings.logDictationsToFile { appendToLog(record) }
         #endif
+        return saved
     }
 
     func remove(ids: Set<UUID>) {
@@ -210,16 +214,19 @@ final class DictationHistory: ObservableObject {
         }
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         guard retention.persists, !records.isEmpty else {
             try? FileManager.default.removeItem(at: fileURL)
-            return
+            return true
         }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try DictationHistory.encoder.encode(records).write(to: fileURL, options: .atomic)
+            return true
         } catch {
             Log.store.error("Could not write history.json: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 

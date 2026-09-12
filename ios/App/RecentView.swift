@@ -49,8 +49,11 @@ struct RecentView: View {
                 } footer: {
                     Text(settings.historyRetention.persists
                          ? "\(history.records.count) dictations are stored on this iPhone and pruned by age. Nothing leaves the device."
-                         : "The last \(DictationHistory.sessionCapacity) stay in memory until Aside is closed; nothing is written to disk.")
+                         : "The last \(DictationHistory.sessionCapacity) stay in memory until Aside is closed; nothing is written to disk. Choose a saved retention period to include dictations from Messages.")
                 }
+            }
+            .onChange(of: settings.historyRetention) { _, retention in
+                MessagesHistory.importPending(into: history, retention: retention)
             }
             .themedList()
             .searchable(text: $filter, prompt: "Search dictations")

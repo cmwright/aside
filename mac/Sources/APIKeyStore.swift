@@ -7,13 +7,16 @@ enum APIKeyStore {
     private static let service = "com.codywright.aside.apikeys"
 
     static func key(for providerID: String) -> String? {
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: providerID,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        #if os(iOS)
+        query[kSecAttrAccessGroup as String] = AsideIPC.appGroupID
+        #endif
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status != errSecSuccess && status != errSecItemNotFound {
@@ -27,11 +30,14 @@ enum APIKeyStore {
     }
 
     static func set(_ key: String?, for providerID: String) {
-        let base: [String: Any] = [
+        var base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: providerID,
         ]
+        #if os(iOS)
+        base[kSecAttrAccessGroup as String] = AsideIPC.appGroupID
+        #endif
         guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
             SecItemDelete(base as CFDictionary)
             return
@@ -54,4 +60,49 @@ enum APIKeyStore {
             Log.app.error("Keychain write failed for \(providerID, privacy: .public): \(status, privacy: .public)")
         }
     }
+
+    #if os(iOS)
+    /// Run in the main app after upgrading. Move old app-private items into the
+    /// existing App Group's keychain, never into a preferences file. Remove an old
+    /// item only once its shared replacement is present, so deleted keys stay deleted.
+    static func migrateLegacyKeys() {
+        guard Bundle.main.bundleURL.pathExtension != "appex" else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return }
+        for item in items {
+            guard let group = item[kSecAttrAccessGroup as String] as? String,
+                  group != AsideIPC.appGroupID,
+                  let account = item[kSecAttrAccount as String] as? String,
+                  let data = item[kSecValueData as String] as? Data else { continue }
+            let shared: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecAttrAccessGroup as String: AsideIPC.appGroupID
+            ]
+            var add = shared
+            add[kSecValueData as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            let added = SecItemAdd(add as CFDictionary, nil)
+            guard added == errSecSuccess ||
+                    (added == errSecDuplicateItem && SecItemCopyMatching(shared as CFDictionary, nil) == errSecSuccess)
+            else {
+                Log.app.error("Keychain sharing migration failed: \(added, privacy: .public)")
+                continue
+            }
+            var legacy = shared
+            legacy[kSecAttrAccessGroup as String] = group
+            SecItemDelete(legacy as CFDictionary)
+        }
+    }
+    #endif
+
 }
