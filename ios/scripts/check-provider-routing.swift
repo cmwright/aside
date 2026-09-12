@@ -25,6 +25,11 @@ final class MockProvider: URLProtocol, @unchecked Sendable {
 }
 @main struct Checks {
     @MainActor static func main() async throws {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let completion = RecordingSounds.completion(resuming: continuation)
+            DispatchQueue(label: "test.audio-completion").async(execute: completion)
+        }
+        print("Sound completion resumed safely from a background queue")
         let suite = "aside-provider-tests-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }

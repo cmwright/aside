@@ -16,10 +16,17 @@ final class RecordingSounds {
     func playStart() async {
         guard startID != 0 else { return }
         await withCheckedContinuation { continuation in
-            AudioServicesPlaySystemSoundWithCompletion(startID) { continuation.resume() }
+            AudioServicesPlaySystemSoundWithCompletion(startID, Self.completion(resuming: continuation))
         }
         // Let the speaker tail decay before restarting capture.
         try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    // System Sound Services invokes this on SSClientCompletionQueue, not MainActor.
+    // Resuming a checked continuation is thread-safe; the suspended task returns
+    // to its own actor. Keep the callback explicitly nonisolated and Sendable.
+    nonisolated static func completion(resuming continuation: CheckedContinuation<Void, Never>) -> @Sendable () -> Void {
+        { @Sendable in continuation.resume() }
     }
 
     func playStop() {
