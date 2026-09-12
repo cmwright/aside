@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generates the iOS Xcode project and compiles both targets for a generic iOS device
+# Generates the iOS Xcode project and compiles the app and extension targets for a generic iOS device
 # without signing: the quick verification that the app and the keyboard extension build.
 #
 # To actually put it on a phone, open ios/Aside.xcodeproj in Xcode, pick your iPhone and
@@ -39,7 +39,8 @@ xcodebuild \
 
 APP="$DERIVED/Build/Products/Debug-iphoneos/Aside.app"
 EXT="$APP/PlugIns/AsideKeyboard.appex"
-for path in "$APP" "$EXT"; do
+MESSAGES="$APP/PlugIns/AsideMessages.appex"
+for path in "$APP" "$EXT" "$MESSAGES"; do
   if [ ! -d "$path" ]; then
     echo "Build finished but $path is missing." >&2
     exit 1
@@ -49,3 +50,4 @@ done
 echo ""
 echo "Built: $APP"
 echo "       $EXT"
+echo "       $MESSAGES"

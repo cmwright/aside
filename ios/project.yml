@@ -56,6 +56,7 @@ targets:
       # Shared with the Mac app by reference, never copied. See PLAN-iOS.md.
       - path: ../mac/Sources/Log.swift
       - path: ../mac/Sources/Settings.swift
+      - path: ../mac/Sources/CleanupLevel.swift
       - path: ../mac/Sources/Trigger.swift
       - path: ../mac/Sources/Dictionary.swift
       - path: ../mac/Sources/DictionaryReplacer.swift
@@ -72,6 +73,9 @@ targets:
       - path: ../mac/Sources/DirectClient.swift
     dependencies:
       - package: FluidAudio
+      - target: AsideMessages
+        embed: true
+        codeSign: true
       - target: AsideKeyboard
         embed: true
         codeSign: true
@@ -166,6 +170,53 @@ targets:
             IsASCIICapable: false
             PrefersRightToLeft: false
         UIAppFonts: [BarlowCondensed-SemiBold.ttf]
+
+  AsideMessages:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: Messages
+        excludes: [Info.plist]
+      - path: Shared
+      - path: App/SessionRecorder.swift
+      - path: ../mac/Sources/PCMCapture.swift
+      - path: ../mac/Sources/LocalTranscriber.swift
+      - path: App/Theme.swift
+      - path: App/Fonts
+        buildPhase: resources
+      - path: ../mac/Sources/CleanupLevel.swift
+      - path: ../mac/Sources/Dictionary.swift
+      - path: ../mac/Sources/DictionaryReplacer.swift
+      - path: ../mac/Sources/CleanupPrompt.swift
+      - path: ../mac/Sources/AppleCleanup.swift
+      - path: ../mac/Sources/Log.swift
+    dependencies:
+      - package: FluidAudio
+      - sdk: Messages.framework
+    entitlements:
+      path: AsideMessages.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.codywright.aside]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.ios.messages
+        PRODUCT_NAME: AsideMessages
+        INFOPLIST_FILE: Messages/Info.plist
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+    info:
+      path: Messages/Info.plist
+      properties:
+        NSMicrophoneUsageDescription: "Aside records your voice in Messages and transcribes it on this iPhone."
+        CFBundleName: Aside
+        CFBundleDisplayName: Aside
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIAppFonts: [BarlowCondensed-SemiBold.ttf]
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.message-payload-provider
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController
 
   AsideControl:
     type: app-extension
