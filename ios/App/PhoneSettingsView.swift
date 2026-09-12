@@ -41,6 +41,10 @@ struct PhoneSettingsView: View {
                     }
                 }
 
+                Section(header: SectionHeader("Messages recording")) {
+                    Toggle("Play start and stop sounds", isOn: $settings.playSounds)
+                }
+
                 Section(header: SectionHeader("Cleanup")) {
                     Picker("Level", selection: $settings.cleanup) {
                         Text("None — raw transcript").tag(CleanupLevel.none)

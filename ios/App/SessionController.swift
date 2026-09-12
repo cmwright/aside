@@ -352,6 +352,7 @@ final class SessionController: ObservableObject {
 
     /// Re-reads the session file and drops a session that expired while we were suspended.
     func refresh() {
+        MessagesHistory.importPending(into: history, retention: settings.historyRetention)
         session = ipc.readSession()
         if let session, session.active, !AsideIPC.isActive(session, at: Date()) {
             endSession(expired: true)

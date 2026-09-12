@@ -75,6 +75,39 @@ final class MockProvider: URLProtocol, @unchecked Sendable {
             preconditionFailure("Missing credentials must fail")
         } catch DirectError.missingKey { }
         precondition(MockProvider.requests.count == 3, "No request without required credentials")
+        let historyRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: historyRoot) }
+        let inbox = historyRoot.appendingPathComponent("inbox")
+        let historyURL = historyRoot.appendingPathComponent("history.json")
+        settings.historyRetention = .forever
+        let history = DictationHistory(fileURL: historyURL, settings: settings)
+        let entry = DictationRecord(date: Date(), engine: .direct, source: "messages",
+            rawText: "hello world", finalText: "Hello world.", sttMs: 20, cleanupMs: 10, cleanupLabel: "test")
+        try MessagesHistory.store(entry, directory: inbox, retention: .sessionOnly)
+        precondition(!FileManager.default.fileExists(atPath: inbox.path), "Memory-only preference must not write transcripts")
+        try MessagesHistory.store(entry, directory: inbox, retention: .forever)
+        MessagesHistory.importPending(into: history, directory: inbox, retention: .forever)
+        precondition(history.records.count == 1 && history.records[0].source == "messages")
+        precondition(MessagesHistory.pending(directory: inbox, retention: .forever).isEmpty)
+        let reloaded = DictationHistory(fileURL: historyURL, settings: settings)
+        precondition(reloaded.records.count == 1 && reloaded.records[0].finalText == entry.finalText)
+        try MessagesHistory.store(entry, directory: inbox, retention: .forever)
+        MessagesHistory.importPending(into: history, directory: inbox, retention: .forever)
+        precondition(history.records.count == 1, "Retry must not duplicate a dictation")
+        let old = DictationRecord(date: Date().addingTimeInterval(-8 * 86400), engine: .local, source: "messages",
+            rawText: "old", finalText: "old", sttMs: 0, cleanupMs: 0, cleanupLabel: "none")
+        try MessagesHistory.store(old, directory: inbox, retention: .forever)
+        precondition(MessagesHistory.pending(directory: inbox, retention: .sevenDays).isEmpty, "Prune expired pending history")
+        try MessagesHistory.store(entry, directory: inbox, retention: .forever)
+        precondition(MessagesHistory.pending(directory: inbox, retention: .sessionOnly).isEmpty)
+        precondition(MessagesHistory.pending(directory: inbox, retention: .forever).isEmpty, "Turning storage off deletes pending history")
+        let blockedParent = historyRoot.appendingPathComponent("not-a-directory")
+        try Data().write(to: blockedParent)
+        let failingHistory = DictationHistory(fileURL: blockedParent.appendingPathComponent("history.json"), settings: settings)
+        try MessagesHistory.store(entry, directory: inbox, retention: .forever)
+        MessagesHistory.importPending(into: failingHistory, directory: inbox, retention: .forever)
+        precondition(MessagesHistory.pending(directory: inbox, retention: .forever).count == 1, "Keep queued history when saving fails")
+        print("History import, persistence, deduplication, retention, memory-only and failed-write recovery checks passed")
         print("Provider routing, settings snapshot, credentials, local/direct selection, cleanup-none and fallback checks passed")
     }
 }

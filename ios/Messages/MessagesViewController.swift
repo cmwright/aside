@@ -51,9 +51,13 @@ final class MessageComposerModel: ObservableObject {
     @Published private(set) var recording = false
     @Published private(set) var level: Float = 0
     private let recorder = SessionRecorder()
-    private var recordingLimit: Task<Void, Never>?
+    private var recordingMonitor: Task<Void, Never>?
     private var endpoint = SilenceEndpoint()
     private var pipelinePlan: DictationPipeline.Plan?
+    private var recordingID = UUID()
+    private var sttMilliseconds = 0
+    private var playSounds = true
+    private let sounds = RecordingSounds()
     @Published private(set) var silenceCountdown: Int?
 
     init() {
@@ -98,7 +102,12 @@ final class MessageComposerModel: ObservableObject {
                 let url = root.appendingPathComponent("dictionary.json")
                 let entries = FileManager.default.fileExists(atPath: url.path)
                     ? try DictionaryCodec.decode(Data(contentsOf: url)) : []
-                let plan = DictationPipeline.plan(settings: AppSettings(defaults: defaults), entries: entries)
+                let settings = AppSettings(defaults: defaults)
+                self.playSounds = settings.playSounds
+                self.recordingID = UUID()
+                self.sttMilliseconds = 0
+                self.text = ""
+                let plan = DictationPipeline.plan(settings: settings, entries: entries)
                 self.pipelinePlan = plan
                 if plan.mode == .local {
                     LocalTranscriber.shared.prepare()
@@ -141,13 +150,20 @@ final class MessageComposerModel: ObservableObject {
                     throw RecorderError.inputNotReady(AudioTrace.currentInput)
                 }
                 guard !Task.isCancelled, self.request == id else { return }
+                if self.playSounds {
+                    self.recorder.cancelDictation()
+                    await self.sounds.playStart()
+                    try Task.checkCancellation()
+                    guard self.request == id else { return }
+                    try self.recorder.beginDictation()
+                }
                 self.endpoint = SilenceEndpoint()
                 self.silenceCountdown = nil
                 self.recording = true
                 self.busy = false
                 self.status = "Listening… I’ll give you a countdown when you pause."
-                self.recordingLimit = Task { [weak self] in
-                    for _ in 0..<450 {
+                self.recordingMonitor = Task { [weak self] in
+                    while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(200))
                         guard !Task.isCancelled, let self else { return }
                         guard self.recorder.isDictating else {
@@ -155,13 +171,6 @@ final class MessageComposerModel: ObservableObject {
                             self.status = "The microphone was interrupted. Tap Record to try again."
                             return
                         }
-                    }
-                    guard let self else { return }
-                    if self.endpoint.heardSpeech {
-                        self.finishRecording()
-                    } else {
-                        self.cancel()
-                        self.status = "No speech detected. Tap Record to try again."
                     }
                 }
             } catch {
@@ -175,11 +184,12 @@ final class MessageComposerModel: ObservableObject {
     private func finishRecording() {
         guard recording, let plan = pipelinePlan else { return }
         silenceCountdown = nil
-        recordingLimit?.cancel()
-        recordingLimit = nil
+        recordingMonitor?.cancel()
+        recordingMonitor = nil
         do {
             let audio = try recorder.endDictation()
             recorder.stopSession()
+            if playSounds { sounds.playStop() }
             recording = false
             busy = true
             level = 0
@@ -188,8 +198,10 @@ final class MessageComposerModel: ObservableObject {
             request = id
             task = Task { [weak self] in
                 do {
+                    let started = Date()
                     let raw = try await DictationPipeline.transcribe(audio: audio, plan: plan)
                     guard let self, !Task.isCancelled, self.request == id else { return }
+                    self.sttMilliseconds = Int(Date().timeIntervalSince(started) * 1000)
                     self.text = raw
                     self.busy = false
                     if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -217,8 +229,8 @@ final class MessageComposerModel: ObservableObject {
     }
 
     func cancel() {
-        recordingLimit?.cancel()
-        recordingLimit = nil
+        recordingMonitor?.cancel()
+        recordingMonitor = nil
         recorder.cancelDictation()
         recorder.stopSession()
         recording = false
@@ -254,6 +266,9 @@ final class MessageComposerModel: ObservableObject {
                     self.status = "Cleanup returned empty text. Your draft is still here."
                     return
                 }
+                let record = DictationRecord(id: self.recordingID, date: Date(), engine: plan.mode,
+                    source: "messages", rawText: raw, finalText: reply,
+                    sttMs: self.sttMilliseconds, cleanupMs: result.ms, cleanupLabel: result.label)
                 self.text = reply
                 self.status = "Adding to your message…"
                 conversation.insertText(reply) { [weak self] error in
@@ -263,6 +278,11 @@ final class MessageComposerModel: ObservableObject {
                         if let error {
                             self.status = "Could not insert: \(error.localizedDescription)"
                         } else {
+                            do {
+                                try MessagesHistory.store(record)
+                            } catch {
+                                Log.store.error("Could not save Messages history: \(error.localizedDescription, privacy: .public)")
+                            }
                             self.text = ""
                             self.status = "Added to Messages. Tap Send when you’re ready."
                             self.controller?.dismiss()
