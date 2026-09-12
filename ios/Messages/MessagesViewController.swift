@@ -53,6 +53,7 @@ final class MessageComposerModel: ObservableObject {
     private let recorder = SessionRecorder()
     private var recordingLimit: Task<Void, Never>?
     private var endpoint = SilenceEndpoint()
+    private var pipelinePlan: DictationPipeline.Plan?
     @Published private(set) var silenceCountdown: Int?
 
     init() {
@@ -90,13 +91,24 @@ final class MessageComposerModel: ObservableObject {
                     guard await SessionRecorder.requestMicrophone() else { throw RecorderError.microphoneDenied }
                 }
                 guard !Task.isCancelled, self.request == id else { return }
-                LocalTranscriber.shared.prepare()
-                while LocalTranscriber.shared.state == .loading {
-                    self.status = LocalTranscriber.shared.statusLine
-                    try await Task.sleep(for: .milliseconds(200))
+                guard let root = AsideIPC.containerURL(),
+                      let defaults = UserDefaults(suiteName: AsideIPC.appGroupID) else {
+                    throw DirectError.badResponse("shared Aside settings; open the main app first")
                 }
-                guard LocalTranscriber.shared.state == .ready else {
-                    throw LocalTranscriberError.modelUnavailable(LocalTranscriber.shared.statusLine)
+                let url = root.appendingPathComponent("dictionary.json")
+                let entries = FileManager.default.fileExists(atPath: url.path)
+                    ? try DictionaryCodec.decode(Data(contentsOf: url)) : []
+                let plan = DictationPipeline.plan(settings: AppSettings(defaults: defaults), entries: entries)
+                self.pipelinePlan = plan
+                if plan.mode == .local {
+                    LocalTranscriber.shared.prepare()
+                    while LocalTranscriber.shared.state == .loading {
+                        self.status = LocalTranscriber.shared.statusLine
+                        try await Task.sleep(for: .milliseconds(200))
+                    }
+                    guard LocalTranscriber.shared.state == .ready else {
+                        throw LocalTranscriberError.modelUnavailable(LocalTranscriber.shared.statusLine)
+                    }
                 }
                 // Messages may still be handing audio back after opening its drawer.
                 // Retry only activation failures; cancellation prevents a delayed start
@@ -161,7 +173,7 @@ final class MessageComposerModel: ObservableObject {
     }
 
     private func finishRecording() {
-        guard recording else { return }
+        guard recording, let plan = pipelinePlan else { return }
         silenceCountdown = nil
         recordingLimit?.cancel()
         recordingLimit = nil
@@ -176,7 +188,7 @@ final class MessageComposerModel: ObservableObject {
             request = id
             task = Task { [weak self] in
                 do {
-                    let raw = try await LocalTranscriber.shared.transcribe(pcm16: WAV.pcm16(fromFile: audio))
+                    let raw = try await DictationPipeline.transcribe(audio: audio, plan: plan)
                     guard let self, !Task.isCancelled, self.request == id else { return }
                     self.text = raw
                     self.busy = false
@@ -200,6 +212,7 @@ final class MessageComposerModel: ObservableObject {
     func reset() {
         cancel()
         text = ""
+        pipelinePlan = nil
         status = "Tap Record to speak with Aside."
     }
 
@@ -224,14 +237,7 @@ final class MessageComposerModel: ObservableObject {
         guard !busy, let conversation = controller?.activeConversation else { return }
         let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
-        guard raw.count <= 2000 else {
-            status = "Please keep your reply under 2,000 characters."
-            return
-        }
-        guard let root = AsideIPC.containerURL() else {
-            status = "Aside’s shared dictionary is unavailable. Open Aside and try again."
-            return
-        }
+        guard let plan = pipelinePlan else { return }
         controller?.view.endEditing(true)
         let id = UUID()
         request = id
@@ -239,14 +245,8 @@ final class MessageComposerModel: ObservableObject {
         status = "Cleaning your reply…"
         task = Task { [weak self] in
             do {
-                let url = root.appendingPathComponent("dictionary.json")
-                let entries = FileManager.default.fileExists(atPath: url.path)
-                    ? try DictionaryCodec.decode(Data(contentsOf: url)) : []
-                let defaults = UserDefaults(suiteName: AsideIPC.appGroupID)
-                let cleanupLevel = defaults?.string(forKey: "cleanupLevel").flatMap(CleanupLevel.init(rawValue:)) ?? .medium
-                let cleaned = cleanupLevel == .none ? raw : try await AppleCleanup.shared.clean(raw, level: cleanupLevel, entries: entries)
-                let reply = DictionaryReplacer.apply(cleaned, entries: entries)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let result = try await DictationPipeline.clean(raw: raw, plan: plan.cleanup)
+                let reply = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard let self, !Task.isCancelled, self.request == id,
                       self.controller?.activeConversation === conversation else { return }
                 guard !reply.isEmpty else {

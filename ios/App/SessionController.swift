@@ -657,107 +657,24 @@ final class SessionController: ObservableObject {
 
     // MARK: - Pipeline (the Mac's runCleanup flow)
 
-    struct CleanupPlan {
-        var engine: CleanupEngine
-        var level: CleanupLevel
-        var entries: [DictionaryEntry]
-        var direct: DirectEndpoint?
-        var directNeedsKey: Bool
-    }
+    typealias CleanupPlan = DictationPipeline.CleanupPlan
 
     private func cleanupPlan() -> CleanupPlan {
-        CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
-                    direct: settings.directChatEndpoint(),
-                    directNeedsKey: ProviderPreset.preset(id: settings.directChatProvider).needsKey)
+        DictationPipeline.plan(settings: settings, entries: dictionary.entries).cleanup
     }
 
     private func run(audio: Data, plan: CleanupPlan, origin: Origin) async {
         do {
+            var snapshot = DictationPipeline.plan(settings: settings, entries: plan.entries)
+            snapshot.cleanup = plan
             let started = Date()
-            switch settings.transcriptionMode {
-            case .local:
-                let raw = try await LocalTranscriber.shared.transcribe(pcm16: WAV.pcm16(fromFile: audio))
-                let sttMs = Int(Date().timeIntervalSince(started) * 1000)
-                let result = try await runCleanup(raw: raw, plan: plan)
-                finish(raw: raw, text: result.text, engine: .local, cleanupLabel: result.label,
-                       sttMs: sttMs, cleanupMs: result.ms, origin: origin)
-                return
-
-            case .direct:
-                guard let endpoint = settings.directSttEndpoint() else {
-                    throw DirectError.badResponse("a speech provider with a model and base URL (check Settings)")
-                }
-                let preset = ProviderPreset.preset(id: settings.directSttProvider)
-                if preset.needsKey && (endpoint.apiKey ?? "").isEmpty {
-                    throw DirectError.missingKey(preset.name)
-                }
-                let raw = try await direct.transcribe(
-                    audio: audio, endpoint: endpoint,
-                    vocabulary: DirectClient.vocabulary(from: plan.entries))
-                let sttMs = Int(Date().timeIntervalSince(started) * 1000)
-                let result = try await runCleanup(raw: raw, plan: plan)
-                finish(raw: raw, text: result.text, engine: .direct, cleanupLabel: result.label,
-                       sttMs: sttMs, cleanupMs: result.ms, origin: origin)
-                return
-
-            case .cloud:
-                // The iPhone app has no Worker option; Settings never writes this value.
-                throw ConfigurationProblem.unsupportedEngine
-            }
+            let raw = try await DictationPipeline.transcribe(audio: audio, plan: snapshot, direct: direct)
+            let sttMs = Int(Date().timeIntervalSince(started) * 1000)
+            let result = try await DictationPipeline.clean(raw: raw, plan: plan, direct: direct)
+            finish(raw: raw, text: result.text, engine: snapshot.mode, cleanupLabel: result.label,
+                   sttMs: sttMs, cleanupMs: result.ms, origin: origin)
         } catch {
             fail(error.localizedDescription, origin: origin)
-        }
-    }
-
-    /// The cleanup stage for a transcript already in hand, followed by the dictionary
-    /// post-pass, exactly as on the Mac.
-    private func runCleanup(raw: String, plan: CleanupPlan) async throws -> (text: String, ms: Int, label: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ("", 0, "none") }
-        guard plan.level != .none else {
-            return (DictionaryReplacer.apply(trimmed, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), 0, "none")
-        }
-        let started = Date()
-        switch plan.engine {
-        case .worker:
-            throw ConfigurationProblem.unsupportedEngine
-        case .direct:
-            guard let endpoint = plan.direct else {
-                throw DirectError.badResponse("a usable cleanup provider (check Settings)")
-            }
-            if plan.directNeedsKey && (endpoint.apiKey ?? "").isEmpty {
-                throw DirectError.missingKey(endpoint.providerName)
-            }
-            let reply = try await direct.chat(
-                endpoint: endpoint,
-                system: CleanupPrompt.instructions(level: plan.level, entries: plan.entries),
-                user: CleanupPrompt.userPrompt(trimmed))
-            var text = CleanupPrompt.sanitize(reply)
-            var label = "Direct: \(endpoint.label)"
-            if text.isEmpty || AppleCleanup.similarity(raw: trimmed, cleaned: text) < 0.5 {
-                label += " (off-script; raw text kept)"
-                text = trimmed
-            }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return (DictionaryReplacer.apply(text, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
-        case .apple:
-            var text = trimmed
-            var label = "Apple on-device model"
-            do {
-                text = try await AppleCleanup.shared.clean(trimmed, level: plan.level, entries: plan.entries)
-            } catch let error as AppleCleanupError {
-                if case .declined(let why) = error {
-                    label = "Apple model declined (\(why)); raw text kept"
-                    Log.app.notice("Apple cleanup declined: \(why, privacy: .public)")
-                } else {
-                    throw error
-                }
-            }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return (DictionaryReplacer.apply(text, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
         }
     }
 

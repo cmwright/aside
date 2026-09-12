@@ -32,6 +32,7 @@ struct AsideApp: App {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        APIKeyStore.migrateLegacyKeys()
         #if DEBUG
         // Simulator/test convenience: `xcrun simctl launch` can pass
         // SIMCTL_CHILD_ASIDE_SEED_KEY_<provider>=<key> to put an API key in the keychain
