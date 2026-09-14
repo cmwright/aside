@@ -19,12 +19,19 @@ enum RecorderError: LocalizedError {
     }
 }
 
-/// Microphone capture. `start()` and `stop()` are main-actor; everything the audio thread
-/// touches lives in `PCMSink` (PCMCapture.swift, shared with the iPhone app).
-@MainActor
-final class Recorder {
+/// Microphone capture. An actor on its own serial queue, not the main actor: starting and
+/// stopping `AVAudioEngine` and installing the tap are synchronous mach IPC to coreaudiod,
+/// which has been seen to block for seconds while an input device switches (the sample of
+/// a hung 0.2.0 in issue #2). On the main thread that froze the menu bar and the key-up
+/// handler with it; here it only delays the recording, and the controller can say so.
+/// Everything the audio thread touches lives in `PCMSink` (PCMCapture.swift, shared with
+/// the iPhone app).
+actor Recorder {
     /// Recordings shorter than this are treated as an accidental key tap.
     nonisolated static let minimumDuration: Double = 0.3
+
+    private let queue = DispatchSerialQueue(label: "com.codywright.aside.recorder", qos: .userInteractive)
+    nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
 
     private let engine = AVAudioEngine()
     private let sink = PCMSink()
@@ -51,9 +58,10 @@ final class Recorder {
         observerBox.token = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
-            queue: .main
+            queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.handleConfigurationChange() }
+            guard let self else { return }
+            Task { await self.handleConfigurationChange() }
         }
     }
 
@@ -85,24 +93,49 @@ final class Recorder {
         sink.beginCapture(listener: listener)
         engineStopTask?.cancel()
         engineStopTask = nil
-        try installTapAndStart()
+        do {
+            try installTapAndStart()
+        } catch {
+            sink.discard()
+            throw error
+        }
         isRecording = true
         Log.audio.info("Recording started")
     }
 
     private func installTapAndStart() throws {
         let input = engine.inputNode
+        // The hardware format and the format the node hands a tap. Either one at 0 Hz or
+        // 0 channels (no input device, a device mid-switch) makes installTap raise.
+        let hardware = input.inputFormat(forBus: 0)
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
+        guard hardware.sampleRate > 0, hardware.channelCount > 0,
+              format.sampleRate > 0, format.channelCount > 0 else {
             throw RecorderError.engineFailed("no input device")
         }
         input.removeTap(onBus: 0)
         let sink = self.sink
+        // `format: nil` makes the tap take the node's format at install time rather than
+        // the one queried a moment ago; the two can disagree while an input device is
+        // switching, and AVFAudio reports that by raising an NSException, not an error
+        // (issue #2: SIGABRT on the hotkey). The sink converts from whatever format the
+        // buffers actually carry. The install still runs under an Objective-C @try so any
+        // raise this guard misses fails the recording instead of the process.
+        //
         // The tap runs on AVFoundation's realtime messenger thread. Without `@Sendable`
         // the closure inherits this method's @MainActor isolation and Swift 6 traps
         // (dispatch_assert_queue) the first time audio arrives.
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
-            sink.append(buffer)
+        do {
+            try ObjCException.catching {
+                input.installTap(onBus: 0, bufferSize: 4096, format: nil) { @Sendable buffer, _ in
+                    sink.append(buffer)
+                }
+            }
+        } catch {
+            input.removeTap(onBus: 0)
+            Log.audio.error("installTap raised: \(error.localizedDescription, privacy: .public)")
+            throw RecorderError.engineFailed(
+                "the input (\(Int(hardware.sampleRate)) Hz × \(hardware.channelCount)) could not be tapped: \(error.localizedDescription)")
         }
         let wasRunning = engine.isRunning
         engine.prepare()
@@ -122,13 +155,18 @@ final class Recorder {
         if let engineStartedAt {
             delay = max(delay, Recorder.minimumEngineLifetime - engineStartedAt.duration(to: .now))
         }
-        engineStopTask = Task { @MainActor [weak self] in
+        engineStopTask = Task {
             try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self, !self.isRecording else { return }
-            self.engine.stop()
-            self.engineStartedAt = nil
-            self.engineStopTask = nil
+            guard !Task.isCancelled else { return }
+            stopEngineIfIdle()
         }
+    }
+
+    private func stopEngineIfIdle() {
+        guard !isRecording else { return }
+        engine.stop()
+        engineStartedAt = nil
+        engineStopTask = nil
     }
 
     /// A Bluetooth headset connecting mid-recording changes the input format. Rebuild the

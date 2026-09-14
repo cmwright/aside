@@ -144,6 +144,17 @@ final class AsideTests: XCTestCase {
         XCTAssertEqual(merged[1].term, "new term")
     }
 
+    // MARK: - Recorder
+
+    func testObjCExceptionBecomesAnError() {
+        XCTAssertThrowsError(try ObjCException.catching {
+            NSException(name: .genericException, reason: "boom", userInfo: nil).raise()
+        }) { error in
+            XCTAssertEqual(error.localizedDescription, "boom")
+        }
+        XCTAssertNoThrow(try ObjCException.catching {})
+    }
+
     // MARK: - Settings
 
     func testURLNormalization() {

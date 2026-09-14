@@ -13,6 +13,9 @@ extension KeyboardShortcuts.Name {
 
 enum DictationState: Equatable {
     case idle
+    /// The key is down and the audio engine is coming up. Usually tens of milliseconds;
+    /// seconds while an input device is switching.
+    case starting
     case recording
     case processing
     case failed(String)
@@ -20,6 +23,7 @@ enum DictationState: Equatable {
     var menuTitle: String {
         switch self {
         case .idle: return "Ready"
+        case .starting: return "Starting…"
         case .recording: return "Listening…"
         case .processing: return "Transcribing…"
         case .failed(let message): return message
@@ -86,6 +90,9 @@ final class AppController: ObservableObject {
     /// Incremented for every dictation; async work compares its ticket against this
     /// before touching state, so a cancelled or timed-out job cannot finish later.
     private var jobTicket = 0
+    /// Incremented whenever a recording is discarded or fails, so an engine start still in
+    /// flight on the recorder's queue knows to tear itself down instead of going live.
+    private var startTicket = 0
     private var secureInputTimer: Timer?
 
     private init() {}
@@ -283,13 +290,10 @@ final class AppController: ObservableObject {
             }
         case .latch:
             tapWindowTask?.cancel()
-            guard recorder.isRecording else { trigger.reset(); return }
+            guard state == .recording || state == .starting else { trigger.reset(); return }
             StatusOverlay.shared.show("Listening — tap Right Option to stop", tone: .listening)
         case .discard:
-            recorder.cancel()
-            cancelWatchdog()
-            state = .idle
-            StatusOverlay.shared.hide()
+            discardRecording()
         case .ignore:
             break
         }
@@ -298,8 +302,10 @@ final class AppController: ObservableObject {
     // MARK: - Recording
 
     func toggle() {
-        if recorder.isRecording {
+        if state == .recording {
             endRecordingAndSend()
+        } else if state == .starting {
+            discardRecording()
         } else if state == .processing {
             cancelProcessing()
         } else {
@@ -349,29 +355,62 @@ final class AppController: ObservableObject {
     }
 
     func beginRecording() {
-        guard !recorder.isRecording, state != .processing else { return }
+        guard state != .starting, state != .recording, state != .processing else { return }
         capturedAppName = NSWorkspace.shared.frontmostApplication?.localizedName
         let session = settings.transcriptionMode == .local ? LocalTranscriber.shared.beginSession() : nil
         var listener: (@Sendable ([Float]) -> Void)?
         if let session { listener = { session.feed($0) } }
-        do {
-            try recorder.start(listener: listener)
-            streamingSession = session
-            state = .recording
+        startTicket += 1
+        let ticket = startTicket
+        state = .starting
+        // The engine starts on the recorder's own queue so a slow coreaudiod cannot freeze
+        // the menu bar or the key-up handler. If it drags on, say so instead of showing
+        // nothing; on a healthy machine this task loses the race and never shows.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard self.startTicket == ticket, self.state == .starting else { return }
+            StatusOverlay.shared.show("Waiting for the microphone…", tone: .working)
+        }
+        Task { @MainActor in
+            do {
+                try await recorder.start(listener: listener)
+            } catch {
+                guard self.startTicket == ticket, self.state == .starting else { return }
+                session?.cancel()
+                self.fail(error.localizedDescription)
+                return
+            }
+            guard self.startTicket == ticket, self.state == .starting else {
+                // The key came up, or the app quit, while the engine was still starting:
+                // nothing was captured, so there is nothing to send.
+                await self.recorder.cancel()
+                session?.cancel()
+                return
+            }
+            self.streamingSession = session
+            self.state = .recording
             // Without Accessibility we can still record, but insertion will fall all the way
             // back to the clipboard — say so instead of surprising the user later.
             StatusOverlay.shared.show(
-                accessibilityGranted
+                self.accessibilityGranted
                     ? "Listening"
                     : "Listening — Accessibility not granted, open Permissions… or the text only reaches the clipboard",
                 tone: .listening
             )
-            startWatchdog()
-            play(.start)
-        } catch {
-            session?.cancel()
-            fail(error.localizedDescription)
+            self.startWatchdog()
+            self.play(.start)
         }
+    }
+
+    /// Abandons the recording, or the engine start still in flight, without transcribing.
+    private func discardRecording() {
+        startTicket += 1
+        cancelWatchdog()
+        streamingSession?.cancel()
+        streamingSession = nil
+        Task { await recorder.cancel() }
+        state = .idle
+        StatusOverlay.shared.hide()
     }
 
     /// If the key-up is never delivered (screen lock, secure input field, sleep, a monitor
@@ -382,7 +421,7 @@ final class AppController: ObservableObject {
             try? await Task.sleep(for: .seconds(AppController.maximumRecordingSeconds))
             guard !Task.isCancelled else { return }
             let controller = AppController.shared
-            guard controller.recorder.isRecording else { return }
+            guard controller.state == .recording else { return }
             Log.app.error("Recording hit the \(Int(AppController.maximumRecordingSeconds), privacy: .public)s watchdog; stopping it")
             controller.rightOptionDown = false
             controller.endRecordingAndSend()
@@ -395,29 +434,45 @@ final class AppController: ObservableObject {
     }
 
     func endRecordingAndSend() {
-        guard recorder.isRecording else { return }
+        if state == .starting {
+            // The key came up before the engine was even running: nothing was captured.
+            tapWindowTask?.cancel()
+            trigger.reset()
+            discardRecording()
+            return
+        }
+        guard state == .recording else { return }
         tapWindowTask?.cancel()
         trigger.reset()
         cancelWatchdog()
         let session = streamingSession
         streamingSession = nil
-        let audio: Data
-        do {
-            audio = try recorder.stop()
-        } catch RecorderError.tooShort {
-            session?.cancel()
-            state = .idle
-            StatusOverlay.shared.hide()
-            return
-        } catch {
-            session?.cancel()
-            fail(error.localizedDescription)
-            return
-        }
-
-        play(.stop)
+        // Processing from here: a second key-up or a Stop from the menu while the stop
+        // is on the recorder's queue must not start a second stop.
         state = .processing
+        Task { @MainActor in
+            let audio: Data
+            do {
+                audio = try await recorder.stop()
+            } catch RecorderError.tooShort {
+                session?.cancel()
+                if self.state == .processing { self.state = .idle }
+                StatusOverlay.shared.hide()
+                return
+            } catch {
+                session?.cancel()
+                self.fail(error.localizedDescription)
+                return
+            }
+            // Cancelled or discarded while the stop was on the recorder's queue.
+            guard self.state == .processing else { session?.cancel(); return }
+            self.play(.stop)
+            self.send(audio, session: session)
+        }
+    }
 
+    /// The recording is in hand; hand it to whichever engine is configured.
+    private func send(_ audio: Data, session: StreamingSession?) {
         if settings.transcriptionMode == .local {
             transcribeLocally(audio, session: session)
             return
@@ -739,7 +794,8 @@ final class AppController: ObservableObject {
         cancelWatchdog()
         cancelProcessingWatchdog()
         rightOptionDown = false
-        recorder.cancel()
+        startTicket += 1
+        Task { await recorder.cancel() }
         streamingSession?.cancel()
         streamingSession = nil
         state = .failed(message)
@@ -858,7 +914,7 @@ private struct MenuContent: View {
             Text(warning)
         }
 
-        Button(controller.state == .recording ? "Stop Dictation"
+        Button(controller.state == .recording || controller.state == .starting ? "Stop Dictation"
                : controller.state == .processing ? "Cancel Dictation" : "Start Dictation") {
             controller.toggle()
         }

@@ -75,6 +75,8 @@ targets:
         ENABLE_APP_SANDBOX: "NO"
         COMBINE_HIDPI_IMAGES: "YES"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        # One Objective-C file: the @try wrapper Swift has no equivalent for (issue #2).
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/ObjC/ExceptionCatcher.h
     info:
       path: Info.plist
       properties:

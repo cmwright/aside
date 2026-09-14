@@ -54,6 +54,8 @@ enum AsideIcon {
         switch state {
         case .idle:
             arcs(radii: [4.5, 8], width: 1.6)
+        case .starting:
+            arcs(radii: [4.5, 8], width: 2.2)
         case .recording:
             arcs(radii: [4.5, 8], width: 2.2)
             dot(beamX + 3.4, 9, radius: 1.3)
