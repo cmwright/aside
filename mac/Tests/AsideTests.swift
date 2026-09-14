@@ -110,6 +110,29 @@ final class AsideTests: XCTestCase {
         XCTAssertEqual(decoded.map(\.replacement), ["A", nil])
     }
 
+    @MainActor func testEntriesSortAlphabeticallyWithBlankLast() throws {
+        let unsorted = [DictionaryEntry(term: "zebra"), DictionaryEntry(term: ""),
+                        DictionaryEntry(term: "Acme Cloud"), DictionaryEntry(term: "apple"),
+                        DictionaryEntry(term: "Banana")]
+        XCTAssertEqual(DictionaryStore.sorted(unsorted).map(\.term), ["Acme Cloud", "apple", "Banana", "zebra", ""])
+
+        // Loading a file written in any order lists it alphabetically (blank rows are
+        // never written to disk).
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("aside-dict-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DictionaryCodec.encodeForFile(unsorted).write(to: url)
+        let store = DictionaryStore(fileURL: url)
+        XCTAssertEqual(store.entries.map(\.term), ["Acme Cloud", "apple", "Banana", "zebra"])
+
+        // A new row stays at the end while blank; once the edit is done it moves to where
+        // it belongs.
+        let id = store.add()
+        XCTAssertEqual(store.entries.last?.id, id)
+        store.entries[store.entries.count - 1].term = "cherry"
+        store.commit()
+        XCTAssertEqual(store.entries.map(\.term), ["Acme Cloud", "apple", "Banana", "cherry", "zebra"])
+    }
+
     func testMergePrefersImportedReplacement() {
         let merged = DictionaryStore.merge(
             existing: [DictionaryEntry(term: "Acme Cloud", replacement: "old")],

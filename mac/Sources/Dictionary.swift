@@ -117,7 +117,7 @@ final class DictionaryStore: ObservableObject {
     func load() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
-            entries = try DictionaryCodec.decode(Data(contentsOf: fileURL))
+            entries = DictionaryStore.sorted(try DictionaryCodec.decode(Data(contentsOf: fileURL)))
             Log.store.info("Loaded \(self.entries.count, privacy: .public) dictionary entries")
         } catch {
             lastError = "Could not read dictionary.json: \(error.localizedDescription)"
@@ -135,6 +135,27 @@ final class DictionaryStore: ObservableObject {
             lastError = "Could not write dictionary.json: \(error.localizedDescription)"
             Log.store.error("Dictionary save failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Alphabetical by term, case-insensitively, the order both apps list entries in. A
+    /// blank row (one still being typed) stays at the end so it does not jump away from
+    /// the cursor.
+    static func sorted(_ entries: [DictionaryEntry]) -> [DictionaryEntry] {
+        entries.sorted { a, b in
+            let ta = a.term.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tb = b.term.trimmingCharacters(in: .whitespacesAndNewlines)
+            if ta.isEmpty != tb.isEmpty { return tb.isEmpty }
+            return ta.localizedCaseInsensitiveCompare(tb) == .orderedAscending
+        }
+    }
+
+    /// Puts the list back in alphabetical order and saves. Called when an edit is done
+    /// (Enter, focus leaving a term, the sheet's Save), not on every keystroke: the Mac
+    /// table edits rows in place and re-sorting mid-word would move the row being typed.
+    func commit() {
+        let ordered = DictionaryStore.sorted(entries)
+        if ordered != entries { entries = ordered }
+        save()
     }
 
     /// Adds a blank row and returns its id, unless a blank row already exists, in which
@@ -159,7 +180,7 @@ final class DictionaryStore: ObservableObject {
     func importJSON(from url: URL) {
         do {
             let imported = try DictionaryCodec.decode(Data(contentsOf: url))
-            entries = DictionaryStore.merge(existing: entries, imported: imported)
+            entries = DictionaryStore.sorted(DictionaryStore.merge(existing: entries, imported: imported))
             save()
         } catch {
             lastError = "Import failed: \(error.localizedDescription)"

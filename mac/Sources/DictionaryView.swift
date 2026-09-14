@@ -21,7 +21,7 @@ struct DictionaryView: View {
                     TextField("term", text: $entry.term)
                         .textFieldStyle(.plain)
                         .focused($focusedTerm, equals: entry.id)
-                        .onSubmit { store.save() }
+                        .onSubmit { store.commit() }
                 }
                 TableColumn("Replacement (optional)") { $entry in
                     TextField("", text: Binding(
@@ -29,7 +29,7 @@ struct DictionaryView: View {
                         set: { entry.replacement = $0.isEmpty ? nil : $0 }
                     ))
                     .textFieldStyle(.plain)
-                    .onSubmit { store.save() }
+                    .onSubmit { store.commit() }
                 }
             } rows: {
                 ForEach($store.entries) { $entry in
@@ -57,7 +57,7 @@ struct DictionaryView: View {
 
                 Button("Import…") { importing = true }
                 Button("Export…") { exporting = true }
-                Button("Save") { store.save() }
+                Button("Save") { store.commit() }
                     .keyboardShortcut("s")
             }
 
@@ -73,8 +73,8 @@ struct DictionaryView: View {
                 .textSelection(.enabled)
         }
         .padding(16)
-        .onDisappear { store.save() }
-        .onChange(of: focusedTerm) { _, _ in store.save() }
+        .onDisappear { store.commit() }
+        .onChange(of: focusedTerm) { _, _ in store.commit() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
             if case .success(let url) = result {
                 let scoped = url.startAccessingSecurityScopedResource()

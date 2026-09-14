@@ -119,7 +119,7 @@ private struct DictionaryEntrySheet: View {
         let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
         store.entries[index].term = term.trimmingCharacters(in: .whitespacesAndNewlines)
         store.entries[index].replacement = trimmedReplacement.isEmpty ? nil : trimmedReplacement
-        store.save()
+        store.commit()
         dismiss()
     }
 }
