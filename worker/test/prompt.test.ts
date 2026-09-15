@@ -142,3 +142,16 @@ describe('stripWrappingQuotes / sanitizeModelOutput', () => {
     expect(sanitizeModelOutput('<think>hmm</think>\n"Hello there."')).toBe('Hello there.');
   });
 });
+
+describe('em dashes', () => {
+  it('asks for none and replaces any that come back with a comma', () => {
+    expect(buildCleanupSystemPrompt('light', [])).toContain('Never write an em dash');
+    expect(buildCleanupSystemPrompt('light', [])).toContain('"gonna" as "going to"');
+    expect(buildCleanupSystemPrompt('medium', [])).not.toContain(' — ');
+    expect(sanitizeModelOutput('We ship Friday—if the build passes.')).toBe('We ship Friday, if the build passes.');
+    expect(sanitizeModelOutput('One — two — three')).toBe('One, two, three');
+    expect(sanitizeModelOutput('Done — .')).toBe('Done.');
+    expect(sanitizeModelOutput('"Quoted—and dashed"')).toBe('Quoted, and dashed');
+    expect(sanitizeModelOutput('A hyphen-ated word stays.')).toBe('A hyphen-ated word stays.');
+  });
+});

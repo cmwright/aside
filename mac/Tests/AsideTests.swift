@@ -493,6 +493,17 @@ final class AsideTests: XCTestCase {
         XCTAssertTrue(medium.contains("sounds like \"acme cloud\", write it as \"AcmeCloud\""))
         XCTAssertEqual(CleanupPrompt.sanitize("\"Hello there.\""), "Hello there.")
         XCTAssertEqual(CleanupPrompt.sanitize("  plain  "), "plain")
+        XCTAssertTrue(light.contains("\"gonna\" as \"going to\""), "informal speech rule applies at every level")
+        XCTAssertTrue(medium.contains("Never write an em dash"))
+        XCTAssertFalse(light.contains(" — "), "the prompt itself must not model the dash")
+    }
+
+    func testSanitizeReplacesEmDashes() {
+        XCTAssertEqual(CleanupPrompt.sanitize("We ship Friday—if the build passes."), "We ship Friday, if the build passes.")
+        XCTAssertEqual(CleanupPrompt.sanitize("One — two — three"), "One, two, three")
+        XCTAssertEqual(CleanupPrompt.sanitize("Done — ."), "Done.")
+        XCTAssertEqual(CleanupPrompt.sanitize("No dash here, just a hyphen-ated word."), "No dash here, just a hyphen-ated word.")
+        XCTAssertEqual(CleanupPrompt.sanitize("\"Quoted—and dashed\""), "Quoted, and dashed")
     }
 
     // MARK: - Direct providers
