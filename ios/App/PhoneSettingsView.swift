@@ -103,6 +103,16 @@ struct PhoneSettingsView: View {
                 }
 
                 Section {
+                    Toggle("Use a Bluetooth headset's microphone", isOn: $settings.bluetoothMicrophone)
+                } header: {
+                    SectionHeader("Microphone")
+                } footer: {
+                    Text(settings.bluetoothMicrophone
+                         ? "AirPods and other headsets record through their own microphone. iOS switches them to the phone-call profile for it, which takes a moment, drops playback to mono, and lets a nearby Mac and this iPhone pull the headset back and forth. Applies to the next session."
+                         : "The iPhone's own microphone records; a headset keeps playing in full quality and is never switched over. Applies to the next session.")
+                }
+
+                Section {
                     let lines = AudioTrace.lines
                     if lines.isEmpty {
                         Text("Nothing recorded yet. Start a session or hold to talk.")
@@ -114,7 +124,7 @@ struct PhoneSettingsView: View {
                         Button("Clear") { AudioTrace.clear() }
                     }
                 } header: {
-                    SectionHeader("Microphone")
+                    SectionHeader("Input log")
                 } footer: {
                     Text("Which input the session runs on and what happened when it changed, for example when AirPods connected. Bluetooth headsets are used through their hands-free profile, so their microphone works, and the phone needs a moment to switch them over.")
                 }

@@ -43,6 +43,8 @@ final class AppSettings: ObservableObject {
         static let directSttProvider = "directSttProvider"
         static let directSttModel = "directSttModel"
         static let directSttBaseURL = "directSttBaseURL"
+        static let inputDeviceUID = "inputDeviceUID"
+        static let bluetoothMicrophone = "bluetoothMicrophone"
     }
 
     static let defaultBackendURL = "http://localhost:8787"
@@ -102,6 +104,13 @@ final class AppSettings: ObservableObject {
     @Published var directSttProvider: String { didSet { defaults.set(directSttProvider, forKey: Key.directSttProvider) } }
     @Published var directSttModel: String { didSet { defaults.set(directSttModel, forKey: Key.directSttModel) } }
     @Published var directSttBaseURL: String { didSet { defaults.set(directSttBaseURL, forKey: Key.directSttBaseURL) } }
+    /// Mac: CoreAudio UID of the microphone to record from; empty means the system default.
+    /// AirPods as the default input cost a profile switch on every dictation (see the
+    /// Microphone section in Settings), so a fixed built-in mic is often the better pick.
+    @Published var inputDeviceUID: String { didSet { defaults.set(inputDeviceUID, forKey: Key.inputDeviceUID) } }
+    /// iPhone: whether a Bluetooth headset's microphone may be the input. Off, the phone's own
+    /// microphone records and the headset stays on its high-quality playback profile.
+    @Published var bluetoothMicrophone: Bool { didSet { defaults.set(bluetoothMicrophone, forKey: Key.bluetoothMicrophone) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -116,6 +125,7 @@ final class AppSettings: ObservableObject {
             Key.cleanup: CleanupLevel.medium.rawValue,
             Key.directChatProvider: ProviderPreset.cerebras.id,
             Key.directSttProvider: ProviderPreset.groq.id,
+            Key.bluetoothMicrophone: true,
         ])
         backendURLString = defaults.string(forKey: Key.backendURL) ?? AppSettings.defaultBackendURL
         backendToken = defaults.string(forKey: Key.backendToken) ?? ""
@@ -140,6 +150,8 @@ final class AppSettings: ObservableObject {
         directSttProvider = defaults.string(forKey: Key.directSttProvider) ?? ProviderPreset.groq.id
         directSttModel = defaults.string(forKey: Key.directSttModel) ?? ""
         directSttBaseURL = defaults.string(forKey: Key.directSttBaseURL) ?? ""
+        inputDeviceUID = defaults.string(forKey: Key.inputDeviceUID) ?? ""
+        bluetoothMicrophone = defaults.bool(forKey: Key.bluetoothMicrophone)
     }
 
     /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate

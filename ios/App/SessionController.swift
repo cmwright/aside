@@ -269,6 +269,7 @@ final class SessionController: ObservableObject {
         }
         ipc.purge()
         do {
+            recorder.allowBluetoothMicrophone = settings.bluetoothMicrophone
             try recorder.startSession()
         } catch {
             phase = .failed(error.localizedDescription)
@@ -532,6 +533,7 @@ final class SessionController: ObservableObject {
         }
         if !recorder.isRunning {
             do {
+                recorder.allowBluetoothMicrophone = settings.bluetoothMicrophone
                 try recorder.startSession()
             } catch {
                 phase = .failed(error.localizedDescription)

@@ -73,8 +73,12 @@ actor Recorder {
 
     /// `listener`, when given, receives the 16 kHz mono Float samples as they are captured,
     /// for a transcriber that works while the key is still held.
-    func start(listener: (@Sendable ([Float]) -> Void)? = nil) throws {
+    /// CoreAudio UID of the microphone to record from; nil or empty means the system default.
+    private var preferredInputUID: String?
+
+    func start(listener: (@Sendable ([Float]) -> Void)? = nil, inputDeviceUID: String? = nil) throws {
         guard !isRecording else { return }
+        preferredInputUID = inputDeviceUID
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             break
@@ -103,7 +107,43 @@ actor Recorder {
         Log.audio.info("Recording started")
     }
 
+    /// Points the input node at the chosen microphone, or at whatever the system default is
+    /// right now. Done before every start and rebuild, so a device that disappears falls back
+    /// to the default and a changed default is picked up. Changing the device restarts the
+    /// I/O unit, so the engine is stopped first; the caller starts it again.
+    private func applyInputDevice() {
+        let unit = engine.inputNode.auAudioUnit
+        let wanted: AudioDeviceID?
+        if let uid = preferredInputUID, !uid.isEmpty {
+            if let chosen = AudioInputDevices.deviceID(forUID: uid) {
+                wanted = chosen
+            } else {
+                Log.audio.notice("Chosen microphone is not connected; using the system default")
+                wanted = AudioInputDevices.defaultInputID
+            }
+        } else if inputDeviceOverridden {
+            // Back to "system default" after a fixed device: the node no longer follows the
+            // default on its own, so hand it the current default explicitly.
+            wanted = AudioInputDevices.defaultInputID
+        } else {
+            return
+        }
+        guard let wanted, unit.deviceID != wanted else { return }
+        if engine.isRunning { engine.stop() }
+        do {
+            try unit.setDeviceID(wanted)
+            inputDeviceOverridden = true
+            Log.audio.info("Input device: \(AudioInputDevices.name(of: wanted) ?? String(wanted), privacy: .public)")
+        } catch {
+            Log.audio.error("Could not select the input device: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Set once the input node has been pointed at a device explicitly.
+    private var inputDeviceOverridden = false
+
     private func installTapAndStart() throws {
+        applyInputDevice()
         let input = engine.inputNode
         // The hardware format and the format the node hands a tap. Either one at 0 Hz or
         // 0 channels (no input device, a device mid-switch) makes installTap raise.

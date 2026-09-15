@@ -151,6 +151,10 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Microphone") {
+                MicrophonePicker()
+            }
+
             Section("Feedback") {
                 Toggle("Play a sound on start and stop", isOn: $settings.playSounds)
             }
@@ -255,5 +259,42 @@ extension ProvidersSettingsView {
             }
             checking = false
         }
+    }
+}
+
+/// Which input Aside records from. The system default follows macOS; a fixed device does
+/// not, which is the point when the default is a Bluetooth headset.
+private struct MicrophonePicker: View {
+    @EnvironmentObject private var settings: AppSettings
+    @State private var devices: [AudioInputDevices.Device] = []
+    @State private var defaultDevice: AudioInputDevices.Device?
+
+    var body: some View {
+        Picker("Input", selection: $settings.inputDeviceUID) {
+            Text(defaultDevice.map { "System default (\($0.name))" } ?? "System default").tag("")
+            ForEach(devices) { Text($0.name).tag($0.uid) }
+            if !settings.inputDeviceUID.isEmpty, !devices.contains(where: { $0.uid == settings.inputDeviceUID }) {
+                Text("Chosen microphone (not connected)").tag(settings.inputDeviceUID)
+            }
+        }
+        Text(caption)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+    }
+
+    private var caption: String {
+        let bluetoothDefault = settings.inputDeviceUID.isEmpty && defaultDevice?.isBluetooth == true
+        return (bluetoothDefault
+            ? "The default input is a Bluetooth headset. macOS switches it to the phone-call profile for every dictation: a second or two before Listening appears, and music drops to mono meanwhile. "
+            : "")
+            + "Pick the Mac's own microphone to keep AirPods on their music profile and start instantly. Applies to the next dictation."
+    }
+
+    private func refresh() {
+        devices = AudioInputDevices.list()
+        defaultDevice = AudioInputDevices.defaultInput
     }
 }

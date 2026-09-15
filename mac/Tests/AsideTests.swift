@@ -146,6 +146,24 @@ final class AsideTests: XCTestCase {
 
     // MARK: - Recorder
 
+    func testInputDevicesListTheDefault() throws {
+        let devices = AudioInputDevices.list()
+        try XCTSkipIf(devices.isEmpty, "no audio input on this machine")
+        let fallback = try XCTUnwrap(AudioInputDevices.defaultInput)
+        XCTAssertTrue(devices.contains { $0.uid == fallback.uid }, "the default input is not in the list")
+        XCTAssertEqual(AudioInputDevices.deviceID(forUID: fallback.uid), AudioInputDevices.defaultInputID)
+        XCTAssertNil(AudioInputDevices.deviceID(forUID: "no-such-device"))
+    }
+
+    @MainActor func testMicrophoneSettingsDefaults() {
+        let suite = "aside-mic-tests-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.inputDeviceUID, "", "system default until chosen")
+        XCTAssertTrue(settings.bluetoothMicrophone, "headset microphones stay on unless switched off")
+    }
+
     func testObjCExceptionBecomesAnError() {
         XCTAssertThrowsError(try ObjCException.catching {
             NSException(name: .genericException, reason: "boom", userInfo: nil).raise()

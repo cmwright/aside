@@ -373,7 +373,7 @@ final class AppController: ObservableObject {
         }
         Task { @MainActor in
             do {
-                try await recorder.start(listener: listener)
+                try await recorder.start(listener: listener, inputDeviceUID: settings.inputDeviceUID)
             } catch {
                 guard self.startTicket == ticket, self.state == .starting else { return }
                 session?.cancel()
@@ -435,10 +435,13 @@ final class AppController: ObservableObject {
 
     func endRecordingAndSend() {
         if state == .starting {
-            // The key came up before the engine was even running: nothing was captured.
+            // The key came up before the engine was even running, so nothing was captured.
+            // Say so: with AirPods as the input this takes a second or two, and a silent
+            // vanish reads as "nothing works".
             tapWindowTask?.cancel()
             trigger.reset()
             discardRecording()
+            StatusOverlay.shared.flash("The microphone was not ready yet — hold until you see Listening", tone: .failure, after: 3)
             return
         }
         guard state == .recording else { return }

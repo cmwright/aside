@@ -51,6 +51,11 @@ final class SessionRecorder {
 
     var capturedSeconds: Double { sink.capturedSeconds }
 
+    /// Whether a Bluetooth headset's microphone may be the input. Read at `startSession`.
+    /// Off, the phone's own microphone records and the headset stays on its playback
+    /// profile, which also stops it being pulled back and forth by a nearby Mac.
+    var allowBluetoothMicrophone = true
+
     enum MicrophonePermission {
         case granted
         case denied
@@ -94,8 +99,9 @@ final class SessionRecorder {
             // Bluetooth headset's microphone be the input (AirPods, a car kit); the phone
             // switches such a headset from its music profile to the hands-free one, which
             // takes a moment, see `installTapAndStart`.
-            try audioSession.setCategory(.playAndRecord, mode: .default,
-                                         options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker])
+            var options: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker]
+            if allowBluetoothMicrophone { options.insert(.allowBluetoothHFP) }
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: options)
             try audioSession.setActive(true, options: [])
         } catch {
             AudioTrace.write("session activation failed: \(error.localizedDescription)")
