@@ -145,29 +145,30 @@ actor Recorder {
     private func installTapAndStart() throws {
         applyInputDevice()
         let input = engine.inputNode
-        // The hardware format and the format the node hands a tap. Either one at 0 Hz or
-        // 0 channels (no input device, a device mid-switch) makes installTap raise.
-        let hardware = input.inputFormat(forBus: 0)
-        let format = input.outputFormat(forBus: 0)
-        guard hardware.sampleRate > 0, hardware.channelCount > 0,
-              format.sampleRate > 0, format.channelCount > 0 else {
+        // The hardware format is the one that counts, and it is always current. The node's
+        // own output format is not: it keeps the previous device's format when the device
+        // changes while Aside is idle (AirPods disconnecting between dictations left it at
+        // 24 kHz with the built-in mic at 48 kHz), and a tap in that stale format fails the
+        // engine with kAudioUnitErr_FormatNotSupported (-10868), or, when passed explicitly
+        // against a changed device, raises the issue #2 exception. Zero Hz or zero channels
+        // means no usable input yet (a device mid-switch).
+        let format = input.inputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
             throw RecorderError.engineFailed("no input device")
         }
         input.removeTap(onBus: 0)
         let sink = self.sink
-        // `format: nil` makes the tap take the node's format at install time rather than
-        // the one queried a moment ago; the two can disagree while an input device is
-        // switching, and AVFAudio reports that by raising an NSException, not an error
-        // (issue #2: SIGABRT on the hotkey). The sink converts from whatever format the
-        // buffers actually carry. The install still runs under an Objective-C @try so any
-        // raise this guard misses fails the recording instead of the process.
+        // AVFAudio reports a tap/hardware format disagreement by raising an NSException, not
+        // an error, so the install runs under an Objective-C @try: any raise the guard above
+        // misses fails the recording instead of the process. The sink converts from whatever
+        // format the buffers actually carry.
         //
         // The tap runs on AVFoundation's realtime messenger thread. Without `@Sendable`
         // the closure inherits this method's @MainActor isolation and Swift 6 traps
         // (dispatch_assert_queue) the first time audio arrives.
         do {
             try ObjCException.catching {
-                input.installTap(onBus: 0, bufferSize: 4096, format: nil) { @Sendable buffer, _ in
+                input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
                     sink.append(buffer)
                 }
             }
@@ -175,7 +176,7 @@ actor Recorder {
             input.removeTap(onBus: 0)
             Log.audio.error("installTap raised: \(error.localizedDescription, privacy: .public)")
             throw RecorderError.engineFailed(
-                "the input (\(Int(hardware.sampleRate)) Hz × \(hardware.channelCount)) could not be tapped: \(error.localizedDescription)")
+                "the input (\(Int(format.sampleRate)) Hz × \(format.channelCount)) could not be tapped: \(error.localizedDescription)")
         }
         let wasRunning = engine.isRunning
         engine.prepare()
