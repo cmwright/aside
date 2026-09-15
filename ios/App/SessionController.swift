@@ -99,6 +99,8 @@ final class SessionController: ObservableObject {
     /// Waiting for the engine to come up after a talk-button press with no session running.
     private var talkStartTask: Task<Void, Never>?
     private var current: Origin?
+    /// A dictation the user has ended whose tail is still being captured.
+    private var pendingEnd: (task: Task<Void, Never>, origin: Origin, heldSeconds: Double)?
     private var lastControlRecording = false
 
     /// A dictation longer than this is stopped and processed anyway.
@@ -581,6 +583,9 @@ final class SessionController: ObservableObject {
     }
 
     private func beginDictation(origin: Origin) {
+        // A dictation ended a moment ago is still collecting its tail: finish it with what
+        // has arrived rather than lose it to the new one.
+        flushPendingEnd()
         // A second `start` with one already running replaces it; do not let that release
         // the audio engine on the way through, we are about to use it.
         if current != nil { discardCurrent() }
@@ -601,25 +606,48 @@ final class SessionController: ObservableObject {
         syncControl()
     }
 
+    /// The user is done, but the end of the last word is still in flight (see
+    /// `SessionRecorder.trailingCapture`): the phase changes now, the capture ends after
+    /// the tail has arrived. A new dictation or a cancel in the meantime resolves it early.
     private func endDictationAndProcess() {
-        guard let origin = current else { return }
+        guard let origin = current, pendingEnd == nil else { return }
         cancelWatchdog()
-        let audio: Data
-        do {
-            audio = try recorder.endDictation()
-        } catch {
-            fail(error.localizedDescription, origin: origin)
-            return
-        }
+        let heldSeconds = recorder.capturedSeconds
         phase = .processing
         if let id = origin.commandID {
             publish(DictationResult(id: id, status: .processing))
         }
         syncControl()
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: SessionRecorder.trailingCapture)
+            guard let self, !Task.isCancelled else { return }
+            self.pendingEnd = nil
+            self.processCapturedDictation(origin: origin, heldSeconds: heldSeconds)
+        }
+        pendingEnd = (task, origin, heldSeconds)
+    }
+
+    /// Ends the capture and hands the audio to the pipeline.
+    private func processCapturedDictation(origin: Origin, heldSeconds: Double) {
+        let audio: Data
+        do {
+            audio = try recorder.endDictation(heldSeconds: heldSeconds)
+        } catch {
+            fail(error.localizedDescription, origin: origin)
+            return
+        }
         let plan = cleanupPlan()
         Task { @MainActor in
             await self.run(audio: audio, plan: plan, origin: origin)
         }
+    }
+
+    /// An end still waiting for the tail is completed now, with whatever has arrived.
+    private func flushPendingEnd() {
+        guard let pending = pendingEnd else { return }
+        pending.task.cancel()
+        pendingEnd = nil
+        processCapturedDictation(origin: pending.origin, heldSeconds: pending.heldSeconds)
     }
 
     private func cancelDictation() {
@@ -637,6 +665,8 @@ final class SessionController: ObservableObject {
     /// Drops the in-flight dictation and its result file without touching the engine.
     private func discardCurrent() {
         cancelWatchdog()
+        pendingEnd?.task.cancel()
+        pendingEnd = nil
         recorder.cancelDictation()
         if let id = current?.commandID { ipc.removeResult(id: id) }
         current = nil
@@ -805,6 +835,8 @@ final class SessionController: ObservableObject {
     private func fail(_ message: String, origin: Origin, alreadyCleared: Bool = false) {
         if !alreadyCleared {
             cancelWatchdog()
+            pendingEnd?.task.cancel()
+            pendingEnd = nil
             recorder.cancelDictation()
             current = nil
             retimePolling()

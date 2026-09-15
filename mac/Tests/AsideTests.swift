@@ -146,6 +146,15 @@ final class AsideTests: XCTestCase {
 
     // MARK: - Recorder
 
+    /// The tail kept after the key-up has to outlast a whole tap block at the slowest input
+    /// (4096 frames at 16 kHz is 256 ms) plus the input latency, and stay well under a
+    /// syllable so it never reads as lag. `testParakeetKeepsAWordCutShort` covers the rest.
+    func testTrailingCaptureCoversATapBlock() {
+        XCTAssertGreaterThanOrEqual(Recorder.trailingCapture, .milliseconds(300))
+        XCTAssertLessThanOrEqual(Recorder.trailingCapture, .milliseconds(600))
+        XCTAssertLessThan(Recorder.minimumDuration, 0.4, "the held time, not the total, decides too-short")
+    }
+
     func testInputDevicesListTheDefault() throws {
         let devices = AudioInputDevices.list()
         try XCTSkipIf(devices.isEmpty, "no audio input on this machine")
@@ -394,7 +403,7 @@ final class AsideTests: XCTestCase {
 
     /// Real model, real audio. Skipped unless VTT_LOCAL_ASR_TEST=1 because it downloads
     /// ~600 MB on first run. Run once to prove the pipeline and warm the cache:
-    ///   VTT_LOCAL_ASR_TEST=1 xcodebuild ... test -only-testing:AsideTests/AsideTests/testParakeetTranscribesFixture
+    ///   TEST_RUNNER_VTT_LOCAL_ASR_TEST=1 xcodebuild ... test -only-testing:AsideTests/AsideTests/testParakeetTranscribesFixture
     @MainActor
     func testParakeetTranscribesFixture() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")
@@ -408,42 +417,44 @@ final class AsideTests: XCTestCase {
         XCTAssertTrue(text.lowercased().contains("test"), "got: \(text)")
     }
 
-    /// Streaming (fed while "recording") must produce the same words as the whole-clip path
-    /// on a clip long enough to cross two 11 s window seams. Same gate as above. The clip is
-    /// synthesized with `say`, so no fixture file is needed.
+    /// The whole-clip path must keep every word of a recording long enough to cross two of
+    /// FluidAudio's 11 s windows. This is why the Mac app transcribes the whole clip: fed the
+    /// same audio as a stream while "recording", FluidAudio 0.15.6 dropped "and then it goes
+    /// back and does it again" at the first seam and ended with "uses.ed", every run. Same
+    /// gate as above; the clip is synthesized with `say`, so no fixture file is needed.
     @MainActor
-    func testStreamingSessionMatchesWholeClip() async throws {
+    func testParakeetWholeClipKeepsEveryWord() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")
-        let pcm = try Self.synthesizedSpeech(
-            "Hello there, this is a longer test of dictation on this Mac. I am going to keep talking for a while so that the recording runs well past the first eleven second window. The quick brown fox jumps over the lazy dog, and then it goes back and does it again because nobody was watching the first time. We should also mention a few product names like AcmeCloud and a number like forty two, plus a question: does the streaming path drop or repeat words at the seams? Let us find out by comparing it against the whole clip transcription that the app used before this change.")
+        let text = "Hello there, this is a longer test of dictation on this Mac. I am going to keep talking for a while so that the recording runs well past the first eleven second window. The quick brown fox jumps over the lazy dog, and then it goes back and does it again because nobody was watching the first time. We should also mention a few product names like Acme Cloud and a number like forty two, plus a question: does the long path drop or repeat words at the seams? Let us find out by comparing it against what was said."
+        let pcm = try Self.synthesizedSpeech(text)
         XCTAssertGreaterThan(WAV.duration(ofPCM16: pcm.count), 25, "clip should cross two window seams")
 
-        let transcriber = LocalTranscriber.shared
-        var started = Date()
-        let whole = try await transcriber.transcribe(pcm16: pcm)
-        let wholeMs = Int(Date().timeIntervalSince(started) * 1000)
-
-        let session = try XCTUnwrap(transcriber.beginSession(), "model is loaded, so a session must start")
-        // Feed like the microphone tap does: ~85 ms chunks.
-        let samples = LocalTranscriber.floatSamples(fromPCM16: pcm)
-        var offset = 0
-        while offset < samples.count {
-            let end = min(offset + 1365, samples.count)
-            session.feed(Array(samples[offset..<end]))
-            offset = end
-        }
-        // Give the background windows a moment, as they would have during a real recording.
-        try await Task.sleep(for: .seconds(1))
-        started = Date()
-        let streamed = try await session.finish()
-        let tailMs = Int(Date().timeIntervalSince(started) * 1000)
-
-        print("Whole clip (\(wholeMs) ms): \(whole)")
-        print("Streaming (tail \(tailMs) ms): \(streamed)")
-        let a = Self.words(whole), b = Self.words(streamed)
+        let started = Date()
+        let heard = try await LocalTranscriber.shared.transcribe(pcm16: pcm)
+        print("Whole clip (\(Int(Date().timeIntervalSince(started) * 1000)) ms): \(heard)")
+        // Numbers come back as digits ("42", "11-second"); everything else should be verbatim.
+        let a = Self.words(text.replacingOccurrences(of: "forty two", with: "42").replacingOccurrences(of: "eleven", with: "11"))
+        let b = Self.words(heard)
         let distance = Self.editDistance(a, b)
-        XCTAssertLessThanOrEqual(Double(distance) / Double(max(a.count, 1)), 0.05,
-                                 "\(distance) word edits between whole-clip and streaming transcripts")
+        XCTAssertLessThanOrEqual(Double(distance) / Double(a.count), 0.03, "\(distance) word edits: \(heard)")
+        XCTAssertTrue(heard.contains("goes back and does it again"), "the first seam: \(heard)")
+        XCTAssertTrue(heard.hasSuffix("what was said."), "the end: \(heard)")
+    }
+
+    /// Why `Recorder.trailingCapture` is 400 ms: the model itself is not what loses a last
+    /// word. Fed a clip cut off 200 ms before the speech ends it still gives the word; at
+    /// 300 ms it degrades and at 400 ms it is gone (the measurement behind the constant).
+    /// Trailing silence made no difference, so none is added. Same gate as above.
+    @MainActor
+    func testParakeetKeepsAWordCutShort() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["VTT_LOCAL_ASR_TEST"] == "1")
+        let pcm = try Self.synthesizedSpeech("Please remember to send the report to the client before the meeting tomorrow")
+        let samples = LocalTranscriber.floatSamples(fromPCM16: pcm)
+        var end = samples.count
+        while end > 0, abs(samples[end - 1]) < 0.02 { end -= 1 }
+        let cut = pcm.prefix((end - 200 * 16) * 2)
+        let heard = try await LocalTranscriber.shared.transcribe(pcm16: Data(cut))
+        XCTAssertTrue(heard.lowercased().contains("tomorrow"), "got: \(heard)")
     }
 
     // MARK: - Dictionary post-pass (Swift port)

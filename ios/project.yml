@@ -22,8 +22,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.3.5"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "0.3.6"
+    CURRENT_PROJECT_VERSION: "11"
     # Device installs need an Xcode-managed profile: the App Group capability has to be
     # registered with Apple, and Xcode does that by itself only in Automatic mode.
     CODE_SIGN_STYLE: Automatic

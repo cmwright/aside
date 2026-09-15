@@ -77,9 +77,6 @@ final class AppController: ObservableObject {
     private var flagsTap: FlagsTap?
     private var wakeObservers: [any NSObjectProtocol] = []
     private var capturedAppName: String?
-    /// Local mode: Parakeet keeps up with the audio while the key is held, so key-up only
-    /// has the tail left to decode. Nil when the model is not loaded yet or in cloud mode.
-    private var streamingSession: StreamingSession?
     private var rightOptionDown = false
     private var trigger = TriggerLogic()
     private var tapWindowTask: Task<Void, Never>?
@@ -318,6 +315,8 @@ final class AppController: ObservableObject {
         guard state == .processing else { return }
         jobTicket += 1
         cancelProcessingWatchdog()
+        // Still capturing the tail after the key-up: drop that too, at once.
+        Task { await recorder.cancel() }
         Log.app.notice("Dictation cancelled while processing")
         state = .idle
         StatusOverlay.shared.flash("Cancelled", tone: .failure, after: 1.5)
@@ -357,9 +356,6 @@ final class AppController: ObservableObject {
     func beginRecording() {
         guard state != .starting, state != .recording, state != .processing else { return }
         capturedAppName = NSWorkspace.shared.frontmostApplication?.localizedName
-        let session = settings.transcriptionMode == .local ? LocalTranscriber.shared.beginSession() : nil
-        var listener: (@Sendable ([Float]) -> Void)?
-        if let session { listener = { session.feed($0) } }
         startTicket += 1
         let ticket = startTicket
         state = .starting
@@ -373,10 +369,9 @@ final class AppController: ObservableObject {
         }
         Task { @MainActor in
             do {
-                try await recorder.start(listener: listener, inputDeviceUID: settings.inputDeviceUID)
+                try await recorder.start(inputDeviceUID: settings.inputDeviceUID)
             } catch {
                 guard self.startTicket == ticket, self.state == .starting else { return }
-                session?.cancel()
                 self.fail(error.localizedDescription)
                 return
             }
@@ -384,10 +379,8 @@ final class AppController: ObservableObject {
                 // The key came up, or the app quit, while the engine was still starting:
                 // nothing was captured, so there is nothing to send.
                 await self.recorder.cancel()
-                session?.cancel()
                 return
             }
-            self.streamingSession = session
             self.state = .recording
             // Without Accessibility we can still record, but insertion will fall all the way
             // back to the clipboard — say so instead of surprising the user later.
@@ -406,8 +399,6 @@ final class AppController: ObservableObject {
     private func discardRecording() {
         startTicket += 1
         cancelWatchdog()
-        streamingSession?.cancel()
-        streamingSession = nil
         Task { await recorder.cancel() }
         state = .idle
         StatusOverlay.shared.hide()
@@ -448,39 +439,39 @@ final class AppController: ObservableObject {
         tapWindowTask?.cancel()
         trigger.reset()
         cancelWatchdog()
-        let session = streamingSession
-        streamingSession = nil
         // Processing from here: a second key-up or a Stop from the menu while the stop
-        // is on the recorder's queue must not start a second stop.
+        // is on the recorder's queue must not start a second stop. The recorder keeps
+        // capturing for `Recorder.trailingCapture` first, so the end of the last word,
+        // still in flight when the key came up, lands in the recording.
         state = .processing
         Task { @MainActor in
             let audio: Data
             do {
                 audio = try await recorder.stop()
+            } catch RecorderError.cancelled {
+                // Cancelled while the tail was being captured; the overlay already says so.
+                return
             } catch RecorderError.tooShort {
-                session?.cancel()
                 if self.state == .processing { self.state = .idle }
                 StatusOverlay.shared.hide()
                 return
             } catch {
-                session?.cancel()
                 self.fail(error.localizedDescription)
                 return
             }
             // Cancelled or discarded while the stop was on the recorder's queue.
-            guard self.state == .processing else { session?.cancel(); return }
+            guard self.state == .processing else { return }
             self.play(.stop)
-            self.send(audio, session: session)
+            self.send(audio)
         }
     }
 
     /// The recording is in hand; hand it to whichever engine is configured.
-    private func send(_ audio: Data, session: StreamingSession?) {
+    private func send(_ audio: Data) {
         if settings.transcriptionMode == .local {
-            transcribeLocally(audio, session: session)
+            transcribeLocally(audio)
             return
         }
-        session?.cancel()
 
         if settings.transcriptionMode == .direct {
             transcribeDirect(audio)
@@ -708,13 +699,15 @@ final class AppController: ObservableObject {
         }
     }
 
-    /// On-device Parakeet, then whichever cleanup engine is selected. With a streaming session most of the audio is
-    /// already decoded; without one (model still loading) the whole recording runs now.
-    private func transcribeLocally(_ audio: Data, session: StreamingSession?) {
+    /// On-device Parakeet over the whole recording, then whichever cleanup engine is
+    /// selected. The whole clip, deliberately: FluidAudio's sliding-window streaming (Aside
+    /// 0.3.0 to 0.3.4 decoded while the key was held) drops the words that straddle each
+    /// 11 s window seam and garbles the last ones, every time, on a 30 s clip; the offline
+    /// path gets them all and costs about 20 ms per second of audio on Apple silicon.
+    private func transcribeLocally(_ audio: Data) {
         let transcriber = LocalTranscriber.shared
         StatusOverlay.shared.show(
-            session != nil ? "Finishing up"
-                : transcriber.state == .ready ? "Transcribing on this Mac" : "Loading speech model (first time takes a while)",
+            transcriber.state == .ready ? "Transcribing on this Mac" : "Loading speech model (first time takes a while)",
             tone: .working
         )
         let pcm = WAV.pcm16(fromFile: audio)
@@ -724,18 +717,7 @@ final class AppController: ObservableObject {
         Task { @MainActor in
             do {
                 let started = Date()
-                let raw: String
-                if let session {
-                    do {
-                        raw = try await session.finish()
-                    } catch {
-                        // The full recording is still in hand; decode it the slow way.
-                        Log.asr.error("Streaming session failed, falling back to whole-clip transcription: \(error.localizedDescription, privacy: .public)")
-                        raw = try await transcriber.transcribe(pcm16: pcm)
-                    }
-                } else {
-                    raw = try await transcriber.transcribe(pcm16: pcm)
-                }
+                let raw = try await transcriber.transcribe(pcm16: pcm)
                 let sttMs = Date().timeIntervalSince(started) * 1000
                 let result = await self.runCleanup(raw: raw, plan: plan)
                 guard self.stillCurrent(ticket) else { return }
@@ -799,8 +781,6 @@ final class AppController: ObservableObject {
         rightOptionDown = false
         startTicket += 1
         Task { await recorder.cancel() }
-        streamingSession?.cancel()
-        streamingSession = nil
         state = .failed(message)
         StatusOverlay.shared.flash(message, tone: .failure, after: 4)
         Log.app.error("\(message, privacy: .public)")

@@ -8,6 +8,8 @@ enum RecorderError: LocalizedError {
     case needsMicrophonePrompt
     case engineFailed(String)
     case tooShort
+    /// `cancel()` ran while `stop()` was still capturing the tail; there is no audio.
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +17,7 @@ enum RecorderError: LocalizedError {
         case .needsMicrophonePrompt: return "Allow microphone access, then hold the key again"
         case .engineFailed(let message): return "Could not start the microphone: \(message)"
         case .tooShort: return "Too short — hold the key while you speak."
+        case .cancelled: return "Cancelled"
         }
     }
 }
@@ -29,6 +32,16 @@ enum RecorderError: LocalizedError {
 actor Recorder {
     /// Recordings shorter than this are treated as an accidental key tap.
     nonisolated static let minimumDuration: Double = 0.3
+
+    /// How long capture goes on after the key comes up. The end of the last word is still
+    /// on its way at that moment: the tap hands audio over in blocks of up to 4096 frames
+    /// (85 ms at 48 kHz, 256 ms at a Bluetooth headset's 16 kHz) and the partial block in
+    /// flight when the tap comes off is dropped; the input path adds its own latency, more
+    /// over Bluetooth; and a hand that lets go on the last syllable is early by a little
+    /// more. Parakeet still gets a final word with 200 ms of it missing and loses it
+    /// outright at 400 ms (measured), so the tail is kept for this long, which moves the
+    /// cut into the quiet after the speech.
+    nonisolated static let trailingCapture: Duration = .milliseconds(400)
 
     private let queue = DispatchSerialQueue(label: "com.codywright.aside.recorder", qos: .userInteractive)
     nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
@@ -71,12 +84,10 @@ actor Recorder {
         }
     }
 
-    /// `listener`, when given, receives the 16 kHz mono Float samples as they are captured,
-    /// for a transcriber that works while the key is still held.
     /// CoreAudio UID of the microphone to record from; nil or empty means the system default.
     private var preferredInputUID: String?
 
-    func start(listener: (@Sendable ([Float]) -> Void)? = nil, inputDeviceUID: String? = nil) throws {
+    func start(inputDeviceUID: String? = nil) throws {
         guard !isRecording else { return }
         preferredInputUID = inputDeviceUID
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -94,7 +105,7 @@ actor Recorder {
             throw RecorderError.microphoneDenied
         }
 
-        sink.beginCapture(listener: listener)
+        sink.beginCapture()
         engineStopTask?.cancel()
         engineStopTask = nil
         do {
@@ -187,6 +198,8 @@ actor Recorder {
             throw RecorderError.engineFailed(error.localizedDescription)
         }
         if !wasRunning { engineStartedAt = .now }
+        // The latency is part of what `trailingCapture` has to cover; keep it in the log.
+        Log.audio.info("Input: \(Int(format.sampleRate), privacy: .public) Hz × \(format.channelCount, privacy: .public), latency \(Int(input.presentationLatency * 1000), privacy: .public) ms")
     }
 
     /// See `minimumEngineLifetime`. A `start()` before the deadline keeps the engine running.
@@ -224,17 +237,28 @@ actor Recorder {
         }
     }
 
-    /// Stops the engine and returns a finished WAV file, or throws `.tooShort`.
-    func stop() throws -> Data {
+    /// Keeps capturing for `trailingCapture`, then stops and returns a finished WAV file.
+    /// Throws `.tooShort` for an accidental tap and `.cancelled` when `cancel()` ran while
+    /// the tail was being captured.
+    func stop() async throws -> Data {
         guard isRecording else { throw RecorderError.tooShort }
+        // What was in hand when the key came up decides "too short"; the tail is not the
+        // user's doing. The tap lags real time by up to a block, so the total minus the
+        // tail is the other estimate and the larger one is used.
+        let heldAtKeyUp = sink.capturedSeconds
+        try? await Task.sleep(for: Recorder.trailingCapture)
+        guard isRecording else { throw RecorderError.cancelled }
         isRecording = false
         engine.inputNode.removeTap(onBus: 0)
         stopEngineSoon()
 
         let pcm = sink.endCapture()
         let seconds = WAV.duration(ofPCM16: pcm.count)
-        Log.audio.info("Recording stopped: \(seconds, format: .fixed(precision: 2), privacy: .public)s")
-        guard seconds >= Recorder.minimumDuration else { throw RecorderError.tooShort }
+        let trailing = Double(Recorder.trailingCapture.components.seconds)
+            + Double(Recorder.trailingCapture.components.attoseconds) / 1e18
+        let held = max(heldAtKeyUp, seconds - trailing)
+        Log.audio.info("Recording stopped: \(seconds, format: .fixed(precision: 2), privacy: .public)s, \(held, format: .fixed(precision: 2), privacy: .public)s before the key came up")
+        guard held >= Recorder.minimumDuration else { throw RecorderError.tooShort }
         return WAV.file(pcm16: pcm)
     }
 

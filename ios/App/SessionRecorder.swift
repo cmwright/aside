@@ -36,6 +36,16 @@ final class SessionRecorder {
     /// Recordings shorter than this are treated as an accidental tap.
     nonisolated static let minimumDuration: Double = 0.3
 
+    /// How long capture goes on after the finger lifts. The end of the last word is still
+    /// on its way at that moment: the tap hands audio over in blocks of up to 4096 frames
+    /// (85 ms at 48 kHz, 256 ms at a Bluetooth headset's 16 kHz) and the partial block in
+    /// flight when capture ends is dropped, the input path adds its own latency, and a
+    /// finger that lifts on the last syllable is early by a little more. Parakeet still
+    /// gets a final word with 200 ms of it missing and loses it outright at 400 ms
+    /// (measured on the Mac, same model), so the tail is kept for this long. Same value as
+    /// `Recorder.trailingCapture` in the Mac app.
+    nonisolated static let trailingCapture: Duration = .milliseconds(400)
+
     private let engine = AVAudioEngine()
     private let sink = PCMSink()
     private var observers: [any NSObjectProtocol] = []
@@ -157,13 +167,20 @@ final class SessionRecorder {
     }
 
     /// Ends the dictation and returns a finished WAV file, or throws `.tooShort`.
-    func endDictation() throws -> Data {
+    /// `heldSeconds` is `capturedSeconds` as read when the finger lifted, before the
+    /// `trailingCapture` wait: it decides "too short", since the tail is not the user's
+    /// doing. The tap lags real time by up to a block, so the total minus the tail is the
+    /// other estimate and the larger one is used.
+    func endDictation(heldSeconds: Double) throws -> Data {
         guard isDictating else { throw RecorderError.tooShort }
         isDictating = false
         let pcm = sink.endCapture()
         let seconds = WAV.duration(ofPCM16: pcm.count)
-        Log.audio.info("Dictation stopped: \(seconds, format: .fixed(precision: 2), privacy: .public)s")
-        guard seconds >= SessionRecorder.minimumDuration else { throw RecorderError.tooShort }
+        let trailing = Double(SessionRecorder.trailingCapture.components.seconds)
+            + Double(SessionRecorder.trailingCapture.components.attoseconds) / 1e18
+        let held = max(heldSeconds, seconds - trailing)
+        Log.audio.info("Dictation stopped: \(seconds, format: .fixed(precision: 2), privacy: .public)s, \(held, format: .fixed(precision: 2), privacy: .public)s before the finger lifted")
+        guard held >= SessionRecorder.minimumDuration else { throw RecorderError.tooShort }
         return WAV.file(pcm16: pcm)
     }
 

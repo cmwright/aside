@@ -66,9 +66,6 @@ final class PCMSink: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
     private let handoff = Handoff()
-    /// Gets every converted chunk as Float samples as well, for a streaming transcriber.
-    /// Called on the render thread, so it must only enqueue.
-    private var listener: (@Sendable ([Float]) -> Void)?
     /// Gets a 0...1 level per converted chunk while capturing, for a meter. Render thread.
     private var levelListener: (@Sendable (Float) -> Void)?
 
@@ -80,14 +77,11 @@ final class PCMSink: @unchecked Sendable {
                       interleaved: true)!
     }()
 
-    /// Starts keeping audio. `listener`, when given, receives the 16 kHz Float samples as
-    /// they are captured, for a transcriber that works while the key is still held.
-    func beginCapture(listener: (@Sendable ([Float]) -> Void)? = nil,
-                      levelListener: (@Sendable (Float) -> Void)? = nil) {
+    /// Starts keeping audio.
+    func beginCapture(levelListener: (@Sendable (Float) -> Void)? = nil) {
         lock.lock()
         pcm.removeAll(keepingCapacity: true)
         capturing = true
-        self.listener = listener
         self.levelListener = levelListener
         lock.unlock()
     }
@@ -98,7 +92,6 @@ final class PCMSink: @unchecked Sendable {
         let out = pcm
         pcm = Data()
         capturing = false
-        listener = nil
         levelListener = nil
         lock.unlock()
         return out
@@ -109,7 +102,6 @@ final class PCMSink: @unchecked Sendable {
         lock.lock()
         pcm = Data()
         capturing = false
-        listener = nil
         levelListener = nil
         lock.unlock()
     }
@@ -162,11 +154,6 @@ final class PCMSink: @unchecked Sendable {
         let frames = Int(out.frameLength)
         channel[0].withMemoryRebound(to: UInt8.self, capacity: frames * 2) { bytes in
             pcm.append(bytes, count: frames * 2)
-        }
-        if let listener {
-            var floats = [Float](repeating: 0, count: frames)
-            for index in 0..<frames { floats[index] = Float(channel[0][index]) / 32768 }
-            listener(floats)
         }
         if let levelListener {
             var sum: Float = 0
