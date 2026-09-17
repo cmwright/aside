@@ -57,7 +57,9 @@ final class AppController: ObservableObject {
     /// One retry, after this pause, for a cleanup call that failed in a transient way.
     nonisolated static let cleanupRetryDelay: Double = 1.0
 
-    @Published private(set) var state: DictationState = .idle
+    @Published private(set) var state: DictationState = .idle {
+        didSet { syncEscapeTap() }
+    }
     /// Name of the process holding secure keyboard entry, while one does. Global key
     /// monitors receive nothing then, so Right Option is dead until it lets go.
     @Published private(set) var secureInputHolder: String?
@@ -72,9 +74,12 @@ final class AppController: ObservableObject {
     private let dictionary = DictionaryStore.shared
 
     /// The listen-only session tap that sees Right Option while any app is frontmost. It
-    /// lives on its own thread (`FlagsTap`) so a busy main thread can never make macOS
+    /// lives on its own thread (`EventTap`) so a busy main thread can never make macOS
     /// judge the tap slow and switch it off.
-    private var flagsTap: FlagsTap?
+    private var flagsTap: EventTap?
+    /// Active `keyDown` tap that turns Escape into a cancel while a dictation is in flight,
+    /// and swallows it so the frontmost app does not also act on it. See `syncEscapeTap`.
+    private var escapeTap: EventTap?
     private var wakeObservers: [any NSObjectProtocol] = []
     private var capturedAppName: String?
     private var rightOptionDown = false
@@ -197,13 +202,15 @@ final class AppController: ObservableObject {
     /// looking healthy with a dead key until relaunched. Owning the tap means the
     /// disable arrives as an event and can be undone on the spot.
     private func installFlagsMonitors() {
-        let tap = FlagsTap(
-            onFlagsChanged: { keyCode, flags, timestamp in
+        let tap = EventTap(
+            types: [.flagsChanged], options: .listenOnly, label: "flags-tap",
+            handler: { _, keyCode, flags, timestamp in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         AppController.shared.handleFlagsChanged(keyCode: keyCode, flags: flags, timestamp: timestamp)
                     }
                 }
+                return false
             },
             onDisabled: { reason in
                 DispatchQueue.main.async {
@@ -294,6 +301,64 @@ final class AppController: ObservableObject {
         case .ignore:
             break
         }
+    }
+
+    // MARK: - Escape
+
+    nonisolated static let escapeKeyCode = 53
+
+    /// The Escape tap exists exactly while a dictation is in flight: starting, recording,
+    /// or transcribing, right up to the paste. It is an active tap, so Escape reaches nobody
+    /// else: a cancel must not also close whatever dialog is in front. Created and torn
+    /// down on the state changes rather than left in place, so outside a dictation the app
+    /// is not looking at keystrokes at all.
+    private func syncEscapeTap() {
+        let wanted = state == .starting || state == .recording || state == .processing
+        if wanted, escapeTap == nil {
+            let tap = EventTap(
+                types: [.keyDown], options: .defaultTap, label: "escape-tap",
+                handler: { type, keyCode, _, _ in
+                    guard type == .keyDown, keyCode == Int64(AppController.escapeKeyCode) else { return false }
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { AppController.shared.cancelFromEscape() }
+                    }
+                    return true
+                },
+                onDisabled: { reason in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            Log.app.error("macOS disabled the Escape tap (\(reason, privacy: .public))")
+                            _ = AppController.shared.escapeTap?.enable()
+                        }
+                    }
+                }
+            )
+            if tap.start() {
+                escapeTap = tap
+            } else {
+                Log.app.error("Could not create the Escape tap (Accessibility not granted?)")
+            }
+        } else if !wanted, let tap = escapeTap {
+            escapeTap = nil
+            tap.stop()
+        }
+    }
+
+    /// Escape at any stage before the paste: throw away everything captured, or the result
+    /// on its way back. The key may still be held (or latched); the trigger is reset so its
+    /// release means nothing.
+    private func cancelFromEscape() {
+        if state == .processing {
+            Log.app.notice("Dictation cancelled with Escape while transcribing")
+            cancelProcessing()
+            return
+        }
+        guard state == .starting || state == .recording else { return }
+        Log.app.notice("Dictation cancelled with Escape")
+        tapWindowTask?.cancel()
+        trigger.reset()
+        discardRecording()
+        StatusOverlay.shared.flash("Cancelled", tone: .failure, after: 1.5)
     }
 
     // MARK: - Recording
@@ -931,52 +996,63 @@ private struct MenuContent: View {
     }
 }
 
-/// A listen-only session event tap for `flagsChanged`, run on its own thread so the
-/// window server always gets a prompt answer no matter what the main thread is doing.
-/// The callbacks are invoked on the tap thread and must hop to wherever they need to be.
-final class FlagsTap: @unchecked Sendable {
-    typealias FlagsHandler = @Sendable (_ keyCode: Int64, _ flags: UInt64, _ timestamp: TimeInterval) -> Void
+/// A session event tap run on its own thread, so the window server always gets a prompt
+/// answer no matter what the main thread is doing. Two are used: the listen-only
+/// `flagsChanged` tap behind Right Option, which lives for the life of the app, and the
+/// `keyDown` tap behind Escape, which exists only while a dictation is in flight so the app
+/// never sees a keystroke it has no business with. The handler is invoked on the tap thread
+/// and must hop to wherever it needs to be; returning true swallows the event, which only
+/// an active (`.defaultTap`) tap can do.
+final class EventTap: @unchecked Sendable {
+    typealias Handler = @Sendable (_ type: CGEventType, _ keyCode: Int64, _ flags: UInt64, _ timestamp: TimeInterval) -> Bool
     typealias DisabledHandler = @Sendable (_ reason: String) -> Void
 
-    private let onFlagsChanged: FlagsHandler
+    private let types: [CGEventType]
+    private let options: CGEventTapOptions
+    private let label: String
+    private let handler: Handler
     private let onDisabled: DisabledHandler
     private let lock = NSLock()
     private var port: CFMachPort?
     private var runLoop: CFRunLoop?
     private var thread: Thread?
 
-    init(onFlagsChanged: @escaping FlagsHandler, onDisabled: @escaping DisabledHandler) {
-        self.onFlagsChanged = onFlagsChanged
+    init(types: [CGEventType], options: CGEventTapOptions, label: String,
+         handler: @escaping Handler, onDisabled: @escaping DisabledHandler) {
+        self.types = types
+        self.options = options
+        self.label = label
+        self.handler = handler
         self.onDisabled = onDisabled
     }
 
     /// Creates the tap and starts its thread. False when the tap cannot be created, which
     /// in practice means the process is not trusted for Accessibility.
     func start() -> Bool {
-        let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+        let mask = types.reduce(CGEventMask(0)) { $0 | CGEventMask(1 << $1.rawValue) }
         let info = Unmanaged.passUnretained(self).toOpaque()
         let callback: CGEventTapCallBack = { _, type, event, info in
             guard let info else { return Unmanaged.passUnretained(event) }
-            let tap = Unmanaged<FlagsTap>.fromOpaque(info).takeUnretainedValue()
+            let tap = Unmanaged<EventTap>.fromOpaque(info).takeUnretainedValue()
             switch type {
             case .tapDisabledByTimeout:
                 tap.onDisabled("timeout")
             case .tapDisabledByUserInput:
                 tap.onDisabled("user input")
-            case .flagsChanged:
-                tap.onFlagsChanged(
+            default:
+                let swallow = tap.handler(
+                    type,
                     event.getIntegerValueField(.keyboardEventKeycode),
                     event.flags.rawValue,
                     // Same clock as NSEvent.timestamp: seconds since boot.
                     TimeInterval(event.timestamp) / 1_000_000_000
                 )
-            default:
-                break
+                if swallow { return nil }
             }
             return Unmanaged.passUnretained(event)
         }
         guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-                                           options: .listenOnly, eventsOfInterest: mask,
+                                           options: options, eventsOfInterest: mask,
                                            callback: callback, userInfo: info)
         else { return false }
         self.port = port
@@ -993,7 +1069,7 @@ final class FlagsTap: @unchecked Sendable {
             ready.signal()
             CFRunLoopRun()
         }
-        thread.name = "com.codywright.aside.flags-tap"
+        thread.name = "com.codywright.aside.\(label)"
         thread.qualityOfService = .userInteractive
         self.thread = thread
         thread.start()

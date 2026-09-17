@@ -134,7 +134,7 @@ struct GeneralSettingsView: View {
         Form {
             Section("Trigger") {
                 Toggle("Right Option is the dictation key", isOn: $settings.holdRightOption)
-                Text("Hold the key, speak, let go. Needs Accessibility permission.")
+                Text("Hold the key, speak, let go. Press Escape at any point before the text is pasted to cancel and throw it away. Needs Accessibility permission.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("A quick tap", selection: $settings.tapBehavior) {

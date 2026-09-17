@@ -285,6 +285,22 @@ final class AsideTests: XCTestCase {
         XCTAssertEqual(t.keyDown(at: 6), .start, "the next press is a fresh gesture")
     }
 
+    /// Escape while the key is still held resets the trigger, so the release that follows
+    /// must be nothing rather than a second "send" of a recording that is already gone.
+    func testResetWhileHeldMakesTheReleaseNothing() {
+        var t = TriggerLogic()
+        XCTAssertEqual(t.keyDown(at: 0), .start)
+        t.reset()
+        XCTAssertEqual(t.keyUp(at: 2), .ignore)
+        XCTAssertEqual(t.keyDown(at: 3), .start, "the next press is a fresh gesture")
+        // Same when latched: Escape ends it, the next press starts over instead of "stopping".
+        XCTAssertEqual(t.keyUp(at: 3.1), .latch)
+        t.reset()
+        XCTAssertFalse(t.latched)
+        XCTAssertEqual(t.keyDown(at: 5), .start)
+        XCTAssertEqual(AppController.escapeKeyCode, 53, "kVK_Escape")
+    }
+
     func testHoldStillSendsWhenTapsLatch() {
         var t = TriggerLogic()
         XCTAssertEqual(t.keyDown(at: 0), .start)
