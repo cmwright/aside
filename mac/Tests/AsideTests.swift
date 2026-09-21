@@ -712,7 +712,7 @@ final class DictationHistoryTests: XCTestCase {
     }
 
     @MainActor
-    func testRetentionStoresAndPrunesByAge() throws {
+    func testRetentionStoresAndPrunesByAge() async throws {
         let settings = makeSettings()
         settings.historyRetention = .ninetyDays
         let file = root.appendingPathComponent("history.json")
@@ -720,6 +720,7 @@ final class DictationHistoryTests: XCTestCase {
         history.add(record(daysAgo: 100, text: "too old"))
         history.add(record(daysAgo: 10, text: "recent"))
         XCTAssertEqual(history.records.map(\.finalText), ["recent"], "the 100-day-old record is pruned on add")
+        await history.flush()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
 
         let reloaded = DictationHistory(fileURL: file, settings: settings)
@@ -733,6 +734,7 @@ final class DictationHistoryTests: XCTestCase {
         let file = root.appendingPathComponent("history.json")
         let history = DictationHistory(fileURL: file, settings: settings)
         history.add(record(daysAgo: 400, text: "kept forever"))
+        await history.flush()
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
 
         settings.historyRetention = .sessionOnly

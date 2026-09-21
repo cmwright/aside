@@ -7,9 +7,8 @@ import WidgetKit
 /// The session engine: it owns the microphone, watches the App Group for commands from the
 /// keyboard extension, runs the same pipeline the Mac app runs, and writes results back.
 ///
-/// The shape of this mirrors `AppController` in `mac/Sources/App.swift` — `cleanupPlan()`
-/// and `runCleanup(raw:plan:)` are the same two functions — but the trigger is a file in a
-/// shared container instead of a key on a keyboard.
+/// `DictationPipeline` is shared with the Mac app. This controller owns iOS job
+/// lifetimes, microphone sessions, extension handoffs and result delivery.
 @MainActor
 final class SessionController: ObservableObject {
     static let shared = SessionController()
@@ -49,6 +48,10 @@ final class SessionController: ObservableObject {
         }
 
         /// The start command's id, which keys the result file; nil for the in-app button.
+        var source: DictationCommand.Source? {
+            switch self { case .keyboard: return .keyboard; case .control: return .control; case .app: return nil }
+        }
+
         var commandID: UUID? {
             switch self {
             case .keyboard(let id), .control(let id): return id
@@ -86,7 +89,20 @@ final class SessionController: ObservableObject {
     let history: DictationHistory
 
     private let recorder = SessionRecorder()
-    private let direct = DirectClient()
+    private let pipeline = DictationPipeline()
+    private var processingTask: Task<Void, Never>?
+    private var processingWatchdog: Task<Void, Never>?
+    private var jobID: UUID?
+    private var recoveryAudio: Data?
+    private var recoveryPlan: DictationPlan?
+    private var checkpoint: PipelineResult?
+    private var recoveryRecordID: UUID?
+    private var recoveryDelivered = false
+    @Published private(set) var recoveryAvailable = false
+    private var keyboardStartTask: Task<Void, Never>?
+    private var pendingKeyboardStart: UUID?
+    private var heartbeatTimer: Timer?
+    private let liveActivity = DictationActivityController()
     private let ipc = AppGroupStorage.ipc
 
     private var commandObserver: DarwinObserver?
@@ -101,7 +117,6 @@ final class SessionController: ObservableObject {
     private var current: Origin?
     /// A dictation the user has ended whose tail is still being captured.
     private var pendingEnd: (task: Task<Void, Never>, origin: Origin, heldSeconds: Double)?
-    private var lastControlRecording = false
 
     /// A dictation longer than this is stopped and processed anyway.
     private static let watchdogSeconds: UInt64 = 90
@@ -118,10 +133,21 @@ final class SessionController: ObservableObject {
         self.dictionary = dictionary ?? DictionaryStore(fileURL: AppGroupStorage.dictionaryURL)
         self.phone = phone ?? PhoneSettings.shared
         self.history = DictationHistory(fileURL: DictationHistory.defaultFileURL, settings: self.settings)
+        DictationActivityController.removeAbandonedActivities()
         // A session written by an earlier launch is not ours; the audio engine died with it.
         if ipc.readSession()?.active == true { try? ipc.endSession() }
         self.session = ipc.readSession()
         self.pendingClipboardText = try? String(contentsOf: SessionController.pendingClipboardURL, encoding: .utf8)
+        recorder.inputUnavailable = { [weak self] message, terminal in
+            guard let self else { return }
+            if terminal {
+                self.endSession(preservingRecovery: true)
+                self.banner = message
+            } else if let origin = self.current, self.phase == .listening || self.phase == .starting {
+                self.fail(message, origin: origin)
+            }
+            self.writeHeartbeat()
+        }
         recorder.levelHandler = { [weak self] level in
             Task { @MainActor in self?.pushLevel(level) }
         }
@@ -136,7 +162,7 @@ final class SessionController: ObservableObject {
 
     private var activeObserver: NSObjectProtocol?
 
-    var isSessionActive: Bool { AsideIPC.isActive(session, at: Date()) }
+    var isSessionActive: Bool { session?.active == true && recorder.isRunning }
 
     var sessionStatus: String {
         guard let session else { return "Inactive" }
@@ -211,7 +237,7 @@ final class SessionController: ObservableObject {
         }
     }
 
-    /// Nil when everything the current settings need is in place.
+    /// Cleanup is optional: its failures preserve speech instead of blocking recording.
     func configurationProblem() -> ConfigurationProblem? {
         if SessionRecorder.microphonePermission == .denied { return .microphoneDenied }
         switch settings.transcriptionMode {
@@ -227,21 +253,6 @@ final class SessionController: ObservableObject {
             let preset = ProviderPreset.preset(id: settings.directSttProvider)
             if preset.needsKey && (endpoint.apiKey ?? "").isEmpty { return .speechKeyMissing(preset.name) }
         case .cloud:
-            return .unsupportedEngine
-        }
-        guard settings.cleanup != .none else { return nil }
-        switch settings.cleanupEngine {
-        case .direct:
-            guard let endpoint = settings.directChatEndpoint() else { return .cleanupProviderIncomplete }
-            let preset = ProviderPreset.preset(id: settings.directChatProvider)
-            if preset.needsKey && (endpoint.apiKey ?? "").isEmpty { return .cleanupKeyMissing(preset.name) }
-        case .apple:
-            switch AppleCleanup.shared.availability {
-            case .available: break
-            case .unsupportedOS: return .appleUnavailable("it needs iOS 26 or later.")
-            case .unavailable(let why): return .appleUnavailable(SessionController.phoneWording(why))
-            }
-        case .worker:
             return .unsupportedEngine
         }
         return nil
@@ -266,6 +277,7 @@ final class SessionController: ObservableObject {
                 afterModelLoads { [weak self] in self?.startSession() }
             } else {
                 phase = .failed(problem.message)
+                rejectPendingKeyboard(problem.message)
             }
             return
         }
@@ -275,12 +287,13 @@ final class SessionController: ObservableObject {
             try recorder.startSession()
         } catch {
             phase = .failed(error.localizedDescription)
+            rejectPendingKeyboard(error.localizedDescription)
             Log.app.error("Session start failed: \(error.localizedDescription, privacy: .public)")
             return
         }
         let now = Date()
         let expiresAt = phone.sessionLength.seconds.map { now.addingTimeInterval($0) }
-        let state = SessionState(active: true, startedAt: now, expiresAt: expiresAt)
+        let state = SessionState(active: true, startedAt: now, expiresAt: expiresAt, heartbeatAt: now, inputReady: recorder.isInputReady)
         do {
             try ipc.writeSession(state)
         } catch {
@@ -292,6 +305,10 @@ final class SessionController: ObservableObject {
         phase = .idle
         startWatchingCommands()
         scheduleExpiry(at: expiresAt)
+        liveActivity.start(recordingID: current?.commandID ?? jobID, isRecording: phase == .listening)
+        if phase == .processing { liveActivity.update(isRecording: false, status: "Transcribing") }
+        startHeartbeat()
+        if let id = pendingKeyboardStart { startKeyboardWhenReady(id: id) }
         askForNotificationsOnce()
         prepareEngines()
         Log.app.notice("Session started, expires \(expiresAt?.description ?? "never", privacy: .public)")
@@ -309,13 +326,19 @@ final class SessionController: ObservableObject {
         }
     }
 
-    func endSession(expired: Bool = false) {
+    func endSession(expired: Bool = false, preservingRecovery: Bool = false) {
         modelWaitTask?.cancel()
         modelWaitTask = nil
         expiryTask?.cancel()
         expiryTask = nil
         stopWatchingCommands()
-        discardCurrent()
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        keyboardStartTask?.cancel()
+        keyboardStartTask = nil
+        pendingKeyboardStart = nil
+        discardCurrent(preservingRecovery: preservingRecovery)
+        liveActivity.end()
         recorder.stopSession()
         try? ipc.endSession()
         session = ipc.readSession()
@@ -337,6 +360,14 @@ final class SessionController: ObservableObject {
         let path = (url.host.map { [$0] } ?? []) + url.pathComponents.filter { $0 != "/" }
         switch (path.first, path.dropFirst().first) {
         case ("session", "start"):
+            if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "dictation" })?.value,
+               let id = UUID(uuidString: value), ipc.readHandoff()?.id == id {
+                pendingKeyboardStart = id
+                if !isSessionActive { startSession() }
+                if isSessionActive { startKeyboardWhenReady(id: id) }
+                selectedTab = .home
+                return
+            }
             if !isSessionActive { startSession() }
             banner = isSessionActive
                 ? "Session started. Go back to your app and switch to the Aside keyboard."
@@ -355,9 +386,13 @@ final class SessionController: ObservableObject {
 
     /// Re-reads the session file and drops a session that expired while we were suspended.
     func refresh() {
-        session = ipc.readSession()
-        if let session, session.active, !AsideIPC.isActive(session, at: Date()) {
-            endSession(expired: true)
+        if let session, session.active, let expiresAt = session.expiresAt, expiresAt <= Date() {
+            if current != nil { renewSession() } else { endSession(expired: true) }
+        }
+        writeHeartbeat()
+        if isSessionActive {
+            liveActivity.start(recordingID: current?.commandID ?? jobID, isRecording: phase == .listening)
+            if phase == .processing { liveActivity.update(isRecording: false, status: "Transcribing") }
         }
         adoptControlCommands()
         deliverPendingClipboard()
@@ -411,7 +446,68 @@ final class SessionController: ObservableObject {
             let seconds = max(0, date.timeIntervalSinceNow)
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            self?.endSession(expired: true)
+            guard let self else { return }
+            if self.current != nil || self.phase == .starting { self.renewSession() }
+            else { self.endSession(expired: true) }
+        }
+    }
+
+    /// Session duration is an idle timeout, renewed by actual use.
+    private func renewSession() {
+        guard var session, session.active else { return }
+        session.expiresAt = phone.sessionLength.seconds.map { Date().addingTimeInterval($0) }
+        self.session = session
+        writeHeartbeat()
+        scheduleExpiry(at: session.expiresAt)
+    }
+
+    private func settleLiveActivity() {
+        if isSessionActive { liveActivity.start(recordingID: nil, isRecording: false) }
+        else { liveActivity.end() }
+    }
+
+    private func startHeartbeat() {
+        heartbeatTimer?.invalidate()
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.writeHeartbeat() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        heartbeatTimer = timer
+        writeHeartbeat()
+    }
+
+    private func writeHeartbeat() {
+        guard var session, session.active else { return }
+        session.heartbeatAt = Date()
+        session.inputReady = recorder.isInputReady
+        self.session = session
+        try? ipc.writeSession(session)
+        liveActivity.refresh()
+    }
+
+    private func rejectPendingKeyboard(_ message: String) {
+        guard let id = pendingKeyboardStart else { return }
+        publish(DictationResult(id: id, status: .failed, error: message))
+        pendingKeyboardStart = nil
+    }
+
+    private func startKeyboardWhenReady(id: UUID) {
+        keyboardStartTask?.cancel()
+        keyboardStartTask = Task { @MainActor [weak self] in
+            for _ in 0..<100 {
+                guard let self, !Task.isCancelled, self.pendingKeyboardStart == id else { return }
+                if self.recorder.isInputReady {
+                    self.pendingKeyboardStart = nil
+                    self.keyboardStartTask = nil
+                    self.beginDictation(origin: .keyboard(id))
+                    self.banner = "Listening. Go back to your app; tap the keyboard mic to stop and insert."
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingKeyboardStart = nil
+            self.fail("The microphone did not become ready. Try again.", origin: .keyboard(id))
         }
     }
 
@@ -469,8 +565,10 @@ final class SessionController: ObservableObject {
         case .start:
             beginDictation(origin: command.isFromControl ? .control(command.id) : .keyboard(command.id))
         case .stop:
+            guard AsideIPC.targetsCurrentRecording(command, currentID: current?.commandID ?? jobID, currentSource: current?.source) else { return }
             endDictationAndProcess()
         case .cancel:
+            guard AsideIPC.targetsCurrentRecording(command, currentID: current?.commandID ?? jobID, currentSource: current?.source) else { return }
             cancelDictation()
         }
     }
@@ -583,12 +681,14 @@ final class SessionController: ObservableObject {
     }
 
     private func beginDictation(origin: Origin) {
-        // A dictation ended a moment ago is still collecting its tail: finish it with what
-        // has arrived rather than lose it to the new one.
-        flushPendingEnd()
+        talkStartTask?.cancel()
+        talkStartTask = nil
         // A second `start` with one already running replaces it; do not let that release
         // the audio engine on the way through, we are about to use it.
         if current != nil { discardCurrent() }
+        clearRecovery()
+        jobID = UUID()
+        renewSession()
         levels = []
         do {
             try recorder.beginDictation()
@@ -603,6 +703,7 @@ final class SessionController: ObservableObject {
         }
         retimePolling()
         startWatchdog()
+        liveActivity.start(recordingID: origin.commandID ?? jobID, isRecording: true)
         syncControl()
     }
 
@@ -610,10 +711,11 @@ final class SessionController: ObservableObject {
     /// `SessionRecorder.trailingCapture`): the phase changes now, the capture ends after
     /// the tail has arrived. A new dictation or a cancel in the meantime resolves it early.
     private func endDictationAndProcess() {
-        guard let origin = current, pendingEnd == nil else { return }
+        guard let origin = current, phase == .listening, pendingEnd == nil else { return }
         cancelWatchdog()
         let heldSeconds = recorder.capturedSeconds
         phase = .processing
+        liveActivity.update(isRecording: false, status: "Transcribing")
         if let id = origin.commandID {
             publish(DictationResult(id: id, status: .processing))
         }
@@ -636,24 +738,22 @@ final class SessionController: ObservableObject {
             fail(error.localizedDescription, origin: origin)
             return
         }
-        let plan = cleanupPlan()
-        Task { @MainActor in
-            await self.run(audio: audio, plan: plan, origin: origin)
+        let plan = DictationPlan(settings: settings, entries: dictionary.entries)
+        guard let ticket = jobID else { return }
+        recoveryAudio = audio
+        recoveryPlan = plan
+        recoveryAvailable = true
+        startProcessingWatchdog(ticket: ticket, origin: origin)
+        processingTask = Task { @MainActor in
+            await self.run(audio: audio, plan: plan, origin: origin, ticket: ticket)
         }
-    }
-
-    /// An end still waiting for the tail is completed now, with whatever has arrived.
-    private func flushPendingEnd() {
-        guard let pending = pendingEnd else { return }
-        pending.task.cancel()
-        pendingEnd = nil
-        processCapturedDictation(origin: pending.origin, heldSeconds: pending.heldSeconds)
     }
 
     private func cancelDictation() {
         var hadKeyboardResult = false
         if case .keyboard = current { hadKeyboardResult = true }
         discardCurrent()
+        talkTrigger.reset()
         // The keyboard is watching for a result that is now never coming; nudge it to look.
         if hadKeyboardResult { DarwinNotifier.post(AsideIPC.resultNotification) }
         phase = .idle
@@ -663,13 +763,27 @@ final class SessionController: ObservableObject {
     }
 
     /// Drops the in-flight dictation and its result file without touching the engine.
-    private func discardCurrent() {
+    private func discardCurrent(preservingRecovery: Bool = false) {
+        talkStartTask?.cancel()
+        talkStartTask = nil
+        talkTapWindowTask?.cancel()
+        talkTapWindowTask = nil
         cancelWatchdog()
+        processingTask?.cancel()
+        processingTask = nil
+        processingWatchdog?.cancel()
+        processingWatchdog = nil
+        jobID = nil
         pendingEnd?.task.cancel()
         pendingEnd = nil
         recorder.cancelDictation()
-        if let id = current?.commandID { ipc.removeResult(id: id) }
+        if let id = current?.commandID { publish(DictationResult(id: id, status: .failed, error: "Dictation cancelled")) }
+        if !preservingRecovery {
+            if current != nil, !recoveryDelivered, let id = recoveryRecordID { history.remove(ids: [id]) }
+            clearRecovery()
+        }
         current = nil
+        settleLiveActivity()
     }
 
     private func startWatchdog() {
@@ -687,109 +801,85 @@ final class SessionController: ObservableObject {
         watchdogTask = nil
     }
 
-    // MARK: - Pipeline (the Mac's runCleanup flow)
+    // MARK: - Shared pipeline and recovery
 
-    struct CleanupPlan {
-        var engine: CleanupEngine
-        var level: CleanupLevel
-        var entries: [DictionaryEntry]
-        var direct: DirectEndpoint?
-        var directNeedsKey: Bool
-    }
-
-    private func cleanupPlan() -> CleanupPlan {
-        CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
-                    direct: settings.directChatEndpoint(),
-                    directNeedsKey: ProviderPreset.preset(id: settings.directChatProvider).needsKey)
-    }
-
-    private func run(audio: Data, plan: CleanupPlan, origin: Origin) async {
+    private func run(audio: Data, plan: DictationPlan, origin: Origin, ticket: UUID) async {
         do {
-            let started = Date()
-            switch settings.transcriptionMode {
-            case .local:
-                let raw = try await LocalTranscriber.shared.transcribe(pcm16: WAV.pcm16(fromFile: audio))
-                let sttMs = Int(Date().timeIntervalSince(started) * 1000)
-                let result = try await runCleanup(raw: raw, plan: plan)
-                finish(raw: raw, text: result.text, engine: .local, cleanupLabel: result.label,
-                       sttMs: sttMs, cleanupMs: result.ms, origin: origin)
-                return
-
-            case .direct:
-                guard let endpoint = settings.directSttEndpoint() else {
-                    throw DirectError.badResponse("a speech provider with a model and base URL (check Settings)")
-                }
-                let preset = ProviderPreset.preset(id: settings.directSttProvider)
-                if preset.needsKey && (endpoint.apiKey ?? "").isEmpty {
-                    throw DirectError.missingKey(preset.name)
-                }
-                let raw = try await direct.transcribe(
-                    audio: audio, endpoint: endpoint,
-                    vocabulary: DirectClient.vocabulary(from: plan.entries))
-                let sttMs = Int(Date().timeIntervalSince(started) * 1000)
-                let result = try await runCleanup(raw: raw, plan: plan)
-                finish(raw: raw, text: result.text, engine: .direct, cleanupLabel: result.label,
-                       sttMs: sttMs, cleanupMs: result.ms, origin: origin)
-                return
-
-            case .cloud:
-                // The iPhone app has no Worker option; Settings never writes this value.
-                throw ConfigurationProblem.unsupportedEngine
+            let result = try await pipeline.run(audio: audio, plan: plan) { [weak self] raw in
+                await self?.saveCheckpoint(raw, origin: origin, ticket: ticket)
             }
+            guard jobID == ticket, !Task.isCancelled else { return }
+            finishPipeline(result, origin: origin)
         } catch {
+            guard jobID == ticket, !Task.isCancelled else { return }
             fail(error.localizedDescription, origin: origin)
         }
     }
 
-    /// The cleanup stage for a transcript already in hand, followed by the dictionary
-    /// post-pass, exactly as on the Mac.
-    private func runCleanup(raw: String, plan: CleanupPlan) async throws -> (text: String, ms: Int, label: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ("", 0, "none") }
-        guard plan.level != .none else {
-            return (DictionaryReplacer.apply(trimmed, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), 0, "none")
+    private func saveCheckpoint(_ raw: PipelineResult, origin: Origin, ticket: UUID) {
+        guard jobID == ticket else { return }
+        checkpoint = raw
+        let id = recoveryRecordID ?? UUID()
+        recoveryRecordID = id
+        if !raw.text.isEmpty {
+            history.add(DictationRecord(id: id, date: Date(), engine: raw.engine, source: origin.name,
+                rawText: raw.raw, finalText: raw.text, sttMs: raw.sttMs, cleanupMs: 0,
+                cleanupLabel: "Raw transcript saved; cleanup pending"), log: false)
         }
-        let started = Date()
-        switch plan.engine {
-        case .worker:
-            throw ConfigurationProblem.unsupportedEngine
-        case .direct:
-            guard let endpoint = plan.direct else {
-                throw DirectError.badResponse("a usable cleanup provider (check Settings)")
-            }
-            if plan.directNeedsKey && (endpoint.apiKey ?? "").isEmpty {
-                throw DirectError.missingKey(endpoint.providerName)
-            }
-            let reply = try await direct.chat(
-                endpoint: endpoint,
-                system: CleanupPrompt.instructions(level: plan.level, entries: plan.entries),
-                user: CleanupPrompt.userPrompt(trimmed))
-            var text = CleanupPrompt.sanitize(reply)
-            var label = "Direct: \(endpoint.label)"
-            if text.isEmpty || AppleCleanup.similarity(raw: trimmed, cleaned: text) < 0.5 {
-                label += " (off-script; raw text kept)"
-                text = trimmed
-            }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return (DictionaryReplacer.apply(text, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
-        case .apple:
-            var text = trimmed
-            var label = "Apple on-device model"
-            do {
-                text = try await AppleCleanup.shared.clean(trimmed, level: plan.level, entries: plan.entries)
-            } catch let error as AppleCleanupError {
-                if case .declined(let why) = error {
-                    label = "Apple model declined (\(why)); raw text kept"
-                    Log.app.notice("Apple cleanup declined: \(why, privacy: .public)")
-                } else {
-                    throw error
+    }
+
+    private func finishPipeline(_ result: PipelineResult, origin: Origin) {
+        if let warning = result.warning { banner = warning }
+        finish(raw: result.raw, text: result.text, engine: result.engine, cleanupLabel: result.cleanupLabel,
+               sttMs: result.sttMs, cleanupMs: result.cleanupMs, origin: origin)
+        if result.warning == nil { clearRecovery() }
+    }
+
+    func retryLastDictation() {
+        guard current == nil, let audio = recoveryAudio, let plan = recoveryPlan else { return }
+        let ticket = UUID()
+        jobID = ticket
+        current = .app
+        phase = .processing
+        startProcessingWatchdog(ticket: ticket, origin: .app)
+        processingTask = Task { @MainActor in
+            if let checkpoint {
+                do {
+                    let result = try await pipeline.clean(checkpoint, plan: plan)
+                    guard jobID == ticket, !Task.isCancelled else { return }
+                    finishPipeline(result, origin: .app)
+                } catch {
+                    guard jobID == ticket, !Task.isCancelled else { return }
+                    fail(error.localizedDescription, origin: .app)
                 }
+            } else {
+                await run(audio: audio, plan: plan, origin: .app, ticket: ticket)
             }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return (DictionaryReplacer.apply(text, entries: plan.entries)
-                .trimmingCharacters(in: .whitespacesAndNewlines), ms, label)
+        }
+    }
+
+    private func clearRecovery() {
+        recoveryAudio = nil
+        recoveryPlan = nil
+        checkpoint = nil
+        recoveryRecordID = nil
+        recoveryDelivered = false
+        recoveryAvailable = false
+    }
+
+    private func startProcessingWatchdog(ticket: UUID, origin: Origin) {
+        processingWatchdog?.cancel()
+        processingWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard let self, !Task.isCancelled, self.jobID == ticket else { return }
+            self.processingTask?.cancel()
+            if var raw = self.checkpoint {
+                raw.warning = "Cleanup took too long; raw transcript kept"
+                raw.cleanupLabel = "timed out; raw text kept"
+                self.finishPipeline(raw, origin: origin)
+            } else {
+                self.fail("Transcription took too long. Retry the recording in Aside.", origin: origin)
+            }
         }
     }
 
@@ -798,7 +888,13 @@ final class SessionController: ObservableObject {
     private func finish(raw: String, text: String, engine: TranscriptionMode, cleanupLabel: String,
                         sttMs: Int, cleanupMs: Int, origin: Origin) {
         let final = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        jobID = nil
+        processingTask = nil
+        processingWatchdog?.cancel()
+        processingWatchdog = nil
         current = nil
+        settleLiveActivity()
+        renewSession()
         retimePolling()
         guard !final.isEmpty else {
             fail("Nothing was said", origin: origin, alreadyCleared: true)
@@ -823,9 +919,10 @@ final class SessionController: ObservableObject {
             }
         }
         syncControl()
-        history.add(DictationRecord(
+        history.add(DictationRecord(id: recoveryRecordID ?? UUID(),
             date: Date(), engine: engine, source: origin.name,
             rawText: raw, finalText: final, sttMs: sttMs, cleanupMs: cleanupMs, cleanupLabel: cleanupLabel))
+        recoveryDelivered = true
         lastSummary = "Last: \(engineDescription(engine)), speech \(sttMs) ms"
             + (cleanupMs > 0 ? ", cleanup \(cleanupMs) ms" : ", no cleanup call")
         Log.app.notice("Done via \(engineName, privacy: .public): stt \(sttMs, privacy: .public) ms, cleanup \(cleanupMs, privacy: .public) ms, \(final.count, privacy: .public) chars")
@@ -834,6 +931,11 @@ final class SessionController: ObservableObject {
 
     private func fail(_ message: String, origin: Origin, alreadyCleared: Bool = false) {
         if !alreadyCleared {
+            jobID = nil
+            processingTask?.cancel()
+            processingTask = nil
+            processingWatchdog?.cancel()
+            processingWatchdog = nil
             cancelWatchdog()
             pendingEnd?.task.cancel()
             pendingEnd = nil
@@ -842,6 +944,8 @@ final class SessionController: ObservableObject {
             retimePolling()
         }
         phase = .failed(message)
+        settleLiveActivity()
+        renewSession()
         if let id = origin.commandID {
             publish(DictationResult(id: id, status: .failed, error: message))
         }
@@ -892,8 +996,8 @@ final class SessionController: ObservableObject {
             recording = true
             id = current
         }
-        guard recording != lastControlRecording || ipc.readControlState() == nil else { return }
-        lastControlRecording = recording
+        let previous = ipc.readControlState()
+        guard previous?.recording != recording || previous?.dictationID != id else { return }
         try? ipc.writeControlState(ControlState(recording: recording, dictationID: id))
         if #available(iOS 18.0, *) {
             ControlCenter.shared.reloadAllControls()

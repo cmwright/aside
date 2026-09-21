@@ -98,12 +98,26 @@ final class AppSettings: ObservableObject {
     @Published var historyRetention: HistoryRetention { didSet { defaults.set(historyRetention.rawValue, forKey: Key.historyRetention) } }
     /// Direct mode: which OpenAI-compatible service runs cleanup, and which one runs speech.
     /// Empty model / base URL strings mean "use the preset's default".
-    @Published var directChatProvider: String { didSet { defaults.set(directChatProvider, forKey: Key.directChatProvider) } }
-    @Published var directChatModel: String { didSet { defaults.set(directChatModel, forKey: Key.directChatModel) } }
-    @Published var directChatBaseURL: String { didSet { defaults.set(directChatBaseURL, forKey: Key.directChatBaseURL) } }
-    @Published var directSttProvider: String { didSet { defaults.set(directSttProvider, forKey: Key.directSttProvider) } }
-    @Published var directSttModel: String { didSet { defaults.set(directSttModel, forKey: Key.directSttModel) } }
-    @Published var directSttBaseURL: String { didSet { defaults.set(directSttBaseURL, forKey: Key.directSttBaseURL) } }
+    @Published var directChatProvider: String {
+        didSet {
+            guard oldValue != directChatProvider else { return }
+            defaults.set(directChatProvider, forKey: Key.directChatProvider)
+            directChatModel = defaults.string(forKey: profileKey("chat", directChatProvider, "model")) ?? ""
+            directChatBaseURL = defaults.string(forKey: profileKey("chat", directChatProvider, "url")) ?? ""
+        }
+    }
+    @Published var directChatModel: String { didSet { defaults.set(directChatModel, forKey: Key.directChatModel); defaults.set(directChatModel, forKey: profileKey("chat", directChatProvider, "model")) } }
+    @Published var directChatBaseURL: String { didSet { defaults.set(directChatBaseURL, forKey: Key.directChatBaseURL); defaults.set(directChatBaseURL, forKey: profileKey("chat", directChatProvider, "url")) } }
+    @Published var directSttProvider: String {
+        didSet {
+            guard oldValue != directSttProvider else { return }
+            defaults.set(directSttProvider, forKey: Key.directSttProvider)
+            directSttModel = defaults.string(forKey: profileKey("stt", directSttProvider, "model")) ?? ""
+            directSttBaseURL = defaults.string(forKey: profileKey("stt", directSttProvider, "url")) ?? ""
+        }
+    }
+    @Published var directSttModel: String { didSet { defaults.set(directSttModel, forKey: Key.directSttModel); defaults.set(directSttModel, forKey: profileKey("stt", directSttProvider, "model")) } }
+    @Published var directSttBaseURL: String { didSet { defaults.set(directSttBaseURL, forKey: Key.directSttBaseURL); defaults.set(directSttBaseURL, forKey: profileKey("stt", directSttProvider, "url")) } }
     /// Mac: CoreAudio UID of the microphone to record from; empty means the system default.
     /// AirPods as the default input cost a profile switch on every dictation (see the
     /// Microphone section in Settings), so a fixed built-in mic is often the better pick.
@@ -152,6 +166,21 @@ final class AppSettings: ObservableObject {
         directSttBaseURL = defaults.string(forKey: Key.directSttBaseURL) ?? ""
         inputDeviceUID = defaults.string(forKey: Key.inputDeviceUID) ?? ""
         bluetoothMicrophone = defaults.bool(forKey: Key.bluetoothMicrophone)
+        // Migrate the currently selected providers once; other providers start with their
+        // own defaults instead of inheriting an unrelated endpoint (and receiving its key).
+        for (stage, provider, field, value) in [
+            ("chat", directChatProvider, "model", directChatModel),
+            ("chat", directChatProvider, "url", directChatBaseURL),
+            ("stt", directSttProvider, "model", directSttModel),
+            ("stt", directSttProvider, "url", directSttBaseURL)
+        ] {
+            let key = profileKey(stage, provider, field)
+            if defaults.object(forKey: key) == nil { defaults.set(value, forKey: key) }
+        }
+    }
+
+    private func profileKey(_ stage: String, _ provider: String, _ field: String) -> String {
+        "provider.\(stage).\(provider).\(field)"
     }
 
     /// The bundle id was com.codywright.voicetotext before 2026-09-08, which is a separate

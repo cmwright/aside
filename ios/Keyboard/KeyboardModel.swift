@@ -41,7 +41,6 @@ final class KeyboardModel: ObservableObject {
     static let startSessionURL = URL(string: "aside://session/start")!
     /// The app writes a `recording` result within a poll or two of the start command. If
     /// nothing appears in this long, the app is not running behind that session file.
-    private static let firstAnswerTimeout: TimeInterval = 6
     /// Once it has answered once, a dictation can legitimately take a while (90 s watchdog
     /// plus a slow cleanup call), but not forever.
     private static let finishTimeout: TimeInterval = 180
@@ -57,6 +56,8 @@ final class KeyboardModel: ObservableObject {
     private var inFlightSince: Date?
     /// Whether the app has written anything at all for the dictation in flight.
     private var sawAnswer = false
+    private var openingForDictation = false
+    private var resumedHandoff = false
     /// Set when the app failed to answer: sessions started before this are treated as
     /// stale, so the status line offers "Start a session" instead of a false "Ready".
     private var distrustSessionsBefore: Date?
@@ -89,14 +90,20 @@ final class KeyboardModel: ObservableObject {
         resultObserver = DarwinObserver(name: AsideIPC.resultNotification) { [weak self] in
             Task { @MainActor in self?.tick() }
         }
+        if let handoff = store.readHandoff(), Date().timeIntervalSince(handoff.at) < Self.finishTimeout {
+            inFlight = handoff.id
+            inFlightSince = handoff.at
+            resumedHandoff = true
+        } else if store.readHandoff() != nil { store.removeHandoff() }
+        openingForDictation = false
         retimePolling()
-        refresh()
+        tick()
     }
 
     func stop() {
         // Leaving a recording running with the keyboard gone would keep the app's
         // microphone open for nothing.
-        if inFlight != nil { cancel() }
+        if inFlight != nil, !openingForDictation { cancel() }
         tapWindowTask?.cancel()
         errorTask?.cancel()
         pollTimer?.invalidate()
@@ -110,6 +117,12 @@ final class KeyboardModel: ObservableObject {
     /// Touch down. A hold or a tap starts here; what a tap means is `tapBehavior`, mirroring the Mac.
     func micDown() {
         guard let ipc, state.canDictate || state == .noSession else { return }
+        if resumedHandoff, inFlight != nil, state == .listening {
+            resumedHandoff = false
+            finishRecording()
+            return
+        }
+        guard state != .transcribing else { return }
         guard hasUsableSession(ipc) else {
             state = .noSession
             return
@@ -171,14 +184,14 @@ final class KeyboardModel: ObservableObject {
     private func finishRecording() {
         guard let ipc, inFlight != nil else { return }
         tapWindowTask?.cancel()
-        guard send(DictationCommand(action: .stop), using: ipc) else { return }
+        guard send(DictationCommand(action: .stop, dictationID: inFlight), using: ipc) else { return }
         state = .transcribing
     }
 
     private func cancel() {
         guard let ipc else { return }
         tapWindowTask?.cancel()
-        _ = send(DictationCommand(action: .cancel), using: ipc)
+        _ = send(DictationCommand(action: .cancel, dictationID: inFlight), using: ipc)
         if let id = inFlight { ipc.removeResult(id: id) }
         forget()
         refresh()
@@ -216,29 +229,25 @@ final class KeyboardModel: ObservableObject {
             refresh()
             return
         }
-        if let result = ipc.readResult(id: id) {
-            sawAnswer = true
-            apply(result, id: id, ipc: ipc)
-            return
-        }
-        // No file yet is normal for the first few hundred milliseconds. A session that went
-        // away underneath us, or an app iOS has killed, is not.
-        if !AsideIPC.isActive(ipc.readSession(), at: Date()) {
+        let result = ipc.readResult(id: id)
+        let decision = AsideIPC.pollDecision(result: result, session: ipc.readSession(),
+            since: inFlightSince ?? Date(), now: Date(), sawAnswer: sawAnswer, handoff: resumedHandoff)
+        if result != nil { sawAnswer = true }
+        switch decision {
+        case .deliver:
+            if let result { apply(result, id: id, ipc: ipc) }
+        case .wait:
+            break
+        case .timedOut:
+            _ = send(DictationCommand(action: .cancel, dictationID: id), using: ipc)
+            distrustSessionsBefore = Date()
+            ipc.removeResult(id: id)
+            if ipc.readHandoff()?.id == id { ipc.removeHandoff() }
+            forget()
+            show(error: "Aside did not respond. Open the app to resume.")
+        case .unavailable:
             forget()
             state = .noSession
-            return
-        }
-        guard let since = inFlightSince else { return }
-        let waited = Date().timeIntervalSince(since)
-        if !sawAnswer, waited > KeyboardModel.firstAnswerTimeout {
-            // The session file says active but nobody is home: stop believing it until a
-            // newer one is written.
-            distrustSessionsBefore = Date()
-            forget()
-            show(error: "Aside is not running. Tap “Start a session”.")
-        } else if sawAnswer, waited > KeyboardModel.finishTimeout {
-            forget()
-            show(error: "The Aside app did not finish.")
         }
     }
 
@@ -247,6 +256,7 @@ final class KeyboardModel: ObservableObject {
         inFlight = nil
         inFlightSince = nil
         sawAnswer = false
+        resumedHandoff = false
         trigger.reset()
         retimePolling()
     }
@@ -269,12 +279,13 @@ final class KeyboardModel: ObservableObject {
 
     private func clearInFlight(id: UUID, ipc: AsideIPCStore) {
         ipc.removeResult(id: id)
+        if ipc.readHandoff()?.id == id { ipc.removeHandoff() }
         forget()
     }
 
     /// Re-reads the session file; cheap enough for the idle 1 s tick.
     func refresh() {
-        guard controller?.hasFullAccess == true, let ipc else {
+        guard let ipc else {
             state = .noFullAccess
             return
         }
@@ -288,7 +299,7 @@ final class KeyboardModel: ObservableObject {
     private func hasUsableSession(_ ipc: AsideIPCStore) -> Bool {
         guard let session = ipc.readSession(), AsideIPC.isActive(session, at: Date()) else { return false }
         guard let distrust = distrustSessionsBefore else { return true }
-        return session.startedAt > distrust
+        return (session.heartbeatAt ?? session.startedAt) > distrust
     }
 
     private func show(error message: String) {
@@ -312,6 +323,24 @@ final class KeyboardModel: ObservableObject {
         guard !text.isEmpty, let proxy = controller?.textDocumentProxy else { return }
         let context = AsideIPC.trimContext(proxy.documentContextBeforeInput)
         proxy.insertText(AsideIPC.needsLeadingSpace(contextBefore: context, text: text) ? " " + text : text)
+    }
+
+    /// Persist the return address before opening the app; iOS may destroy this keyboard.
+    func openForDictation() {
+        guard let ipc else { return }
+        let handoff = KeyboardHandoff(id: UUID(), at: Date())
+        do { try ipc.writeHandoff(handoff) }
+        catch { show(error: "Could not reach Aside."); return }
+        inFlight = handoff.id
+        inFlightSince = handoff.at
+        openingForDictation = true
+        let url = URL(string: "aside://session/start?dictation=\(handoff.id.uuidString)")!
+        if !openApp(url) {
+            openingForDictation = false
+            ipc.removeHandoff()
+            forget()
+            show(error: "Open Aside to start recording.")
+        }
     }
 
     /// The "Start a session" link and the grey mic.

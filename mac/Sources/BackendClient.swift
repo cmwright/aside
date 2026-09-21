@@ -11,11 +11,13 @@ struct TranscriptionResponse: Codable, Sendable {
     var text: String
     var rawText: String?
     var timing: Timing?
+    var warning: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case text
         case rawText = "raw_text"
         case timing = "timing_ms"
+        case warning
     }
 }
 
@@ -88,6 +90,7 @@ struct BackendClient: Sendable {
         do {
             (data, response) = try await session.data(for: urlRequest)
         } catch {
+            try Task.checkCancellation()
             throw BackendError.transport(error.localizedDescription)
         }
 
@@ -118,6 +121,7 @@ struct BackendClient: Sendable {
         do {
             (data, response) = try await session.data(for: urlRequest)
         } catch {
+            try Task.checkCancellation()
             throw BackendError.transport(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else { throw BackendError.badResponse }
@@ -163,6 +167,7 @@ struct BackendClient: Sendable {
         } catch let error as BackendError {
             throw error
         } catch {
+            try Task.checkCancellation()
             throw BackendError.transport(error.localizedDescription)
         }
     }

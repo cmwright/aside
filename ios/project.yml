@@ -12,7 +12,7 @@ packages:
   # CoreML and a binary framework, and a keyboard is killed above ~50 MB.
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    from: "0.12.4"
+    exactVersion: "0.15.6"
 
 # Signing comes from Signing.xcconfig (git-ignored; see Signing.xcconfig.example).
 configFiles:
@@ -22,8 +22,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.3.6"
-    CURRENT_PROJECT_VERSION: "11"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "12"
     # Device installs need an Xcode-managed profile: the App Group capability has to be
     # registered with Apple, and Xcode does that by itself only in Automatic mode.
     CODE_SIGN_STYLE: Automatic
@@ -70,6 +70,10 @@ targets:
       - path: ../mac/Sources/Providers.swift
       - path: ../mac/Sources/APIKeyStore.swift
       - path: ../mac/Sources/DirectClient.swift
+      - path: ../mac/Sources/BackendClient.swift
+      - path: ../mac/Sources/DictationPipeline.swift
+      - path: ../mac/Sources/ObjCException.swift
+      - path: ../mac/Sources/ObjC
     dependencies:
       - package: FluidAudio
       - target: AsideKeyboard
@@ -89,6 +93,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.codywright.aside.ios
         PRODUCT_NAME: Aside
         INFOPLIST_FILE: App/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: ../mac/Sources/ObjC/ExceptionCatcher.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
     info:
@@ -114,6 +119,7 @@ targets:
         # Keeping the audio engine running is what lets a session survive the app going to
         # the background, which is the whole point of "Start Session".
         UIBackgroundModes: [audio]
+        NSSupportsLiveActivities: true
         NSMicrophoneUsageDescription: "Aside records your voice while you hold the mic button, and transcribes it on this iPhone or at the provider you chose."
         # Bundled, OFL-licensed: the word mark.
         UIAppFonts: [BarlowCondensed-SemiBold.ttf]

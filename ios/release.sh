@@ -10,6 +10,7 @@
 #   ./release.sh --no-upload  # archive only, to build/Aside.xcarchive
 set -euo pipefail
 cd "$(dirname "$0")"
+export DVT_PLUG_INS_TO_IGNORE="${DVT_PLUG_INS_TO_IGNORE:-com.apple.dt.IDESimulatorFoundation}"
 
 # Xcode's packaging step shells out to rsync with flags only Apple's openrsync accepts;
 # a Homebrew rsync earlier in PATH makes the export fail with "Copy failed".
@@ -28,7 +29,7 @@ ARCHIVE="$PWD/build/Aside.xcarchive"
 rm -rf "$ARCHIVE"
 xcodebuild -project Aside.xcodeproj -scheme Aside -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" \
-  -allowProvisioningUpdates archive | grep -E "error:|warning: .*(Privacy|Icon)|ARCHIVE" || true
+  -allowProvisioningUpdates archive
 [ -d "$ARCHIVE" ] || { echo "Archive failed." >&2; exit 1; }
 
 if [ "${1:-}" = "--no-upload" ]; then
@@ -53,5 +54,5 @@ PLIST
 
 rm -rf build/export
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist build/ExportOptions.plist \
-  -exportPath build/export -allowProvisioningUpdates | grep -E "error|EXPORT|Upload" || true
+  -exportPath build/export -allowProvisioningUpdates
 echo "Uploaded. It shows up in App Store Connect → TestFlight after processing (10–30 minutes)."

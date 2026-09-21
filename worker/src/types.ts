@@ -27,6 +27,7 @@ export type CleanupLevel = 'none' | 'light' | 'medium';
 export interface TranscriptionResponse {
   text: string;
   raw_text: string;
+  warning?: string;
   timing_ms: {
     stt: number;
     cleanup: number;

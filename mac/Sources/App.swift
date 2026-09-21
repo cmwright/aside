@@ -68,8 +68,15 @@ final class AppController: ObservableObject {
     @Published private(set) var lastRunSummary: String = ""
 
     private let recorder = Recorder()
-    private let client = BackendClient()
-    private let direct = DirectClient()
+    private let pipeline = DictationPipeline()
+    private var processingTask: Task<Void, Never>?
+    private var recordingID: UUID?
+    private var recoveryAudio: Data?
+    private var recoveryPlan: DictationPlan?
+    private var checkpoint: PipelineResult?
+    private var recoveryRecordID: UUID?
+    private var recoveryDelivered = false
+    @Published private(set) var recoveryAvailable = false
     private let settings = AppSettings.shared
     private let dictionary = DictionaryStore.shared
 
@@ -379,9 +386,12 @@ final class AppController: ObservableObject {
     func cancelProcessing() {
         guard state == .processing else { return }
         jobTicket += 1
+        processingTask?.cancel()
+        processingTask = nil
+        clearRecovery(discardRecord: true)
         cancelProcessingWatchdog()
         // Still capturing the tail after the key-up: drop that too, at once.
-        Task { await recorder.cancel() }
+        cancelCapture()
         Log.app.notice("Dictation cancelled while processing")
         state = .idle
         StatusOverlay.shared.flash("Cancelled", tone: .failure, after: 1.5)
@@ -408,8 +418,14 @@ final class AppController: ObservableObject {
             let controller = AppController.shared
             guard controller.stillCurrent(ticket) else { return }
             Log.app.error("Processing hit the \(Int(AppController.maximumProcessingSeconds), privacy: .public)s watchdog; giving up")
+            controller.processingTask?.cancel()
+            controller.processingTask = nil
             controller.jobTicket += 1
-            controller.fail("Took too long; gave up. Check the engine in Settings, then try again.")
+            if let checkpoint = controller.checkpoint {
+                controller.finishPipeline(checkpoint, warning: "Cleanup took too long; raw transcript kept")
+            } else {
+                controller.fail("Transcription took too long. Retry the last recording from the menu.")
+            }
         }
     }
 
@@ -420,7 +436,10 @@ final class AppController: ObservableObject {
 
     func beginRecording() {
         guard state != .starting, state != .recording, state != .processing else { return }
+        clearRecovery(discardRecord: false)
         capturedAppName = NSWorkspace.shared.frontmostApplication?.localizedName
+        let captureID = UUID()
+        recordingID = captureID
         startTicket += 1
         let ticket = startTicket
         state = .starting
@@ -434,7 +453,7 @@ final class AppController: ObservableObject {
         }
         Task { @MainActor in
             do {
-                try await recorder.start(inputDeviceUID: settings.inputDeviceUID)
+                try await recorder.start(inputDeviceUID: settings.inputDeviceUID, id: captureID)
             } catch {
                 guard self.startTicket == ticket, self.state == .starting else { return }
                 self.fail(error.localizedDescription)
@@ -443,7 +462,7 @@ final class AppController: ObservableObject {
             guard self.startTicket == ticket, self.state == .starting else {
                 // The key came up, or the app quit, while the engine was still starting:
                 // nothing was captured, so there is nothing to send.
-                await self.recorder.cancel()
+                await self.recorder.cancel(id: captureID)
                 return
             }
             self.state = .recording
@@ -464,7 +483,7 @@ final class AppController: ObservableObject {
     private func discardRecording() {
         startTicket += 1
         cancelWatchdog()
-        Task { await recorder.cancel() }
+        cancelCapture()
         state = .idle
         StatusOverlay.shared.hide()
     }
@@ -509,295 +528,121 @@ final class AppController: ObservableObject {
         // capturing for `Recorder.trailingCapture` first, so the end of the last word,
         // still in flight when the key came up, lands in the recording.
         state = .processing
-        Task { @MainActor in
-            let audio: Data
-            do {
-                audio = try await recorder.stop()
-            } catch RecorderError.cancelled {
-                // Cancelled while the tail was being captured; the overlay already says so.
-                return
-            } catch RecorderError.tooShort {
-                if self.state == .processing { self.state = .idle }
-                StatusOverlay.shared.hide()
-                return
-            } catch {
-                self.fail(error.localizedDescription)
-                return
-            }
-            // Cancelled or discarded while the stop was on the recorder's queue.
-            guard self.state == .processing else { return }
-            self.play(.stop)
-            self.send(audio)
-        }
-    }
-
-    /// The recording is in hand; hand it to whichever engine is configured.
-    private func send(_ audio: Data) {
-        if settings.transcriptionMode == .local {
-            transcribeLocally(audio)
-            return
-        }
-
-        if settings.transcriptionMode == .direct {
-            transcribeDirect(audio)
-            return
-        }
-
-        StatusOverlay.shared.show("Transcribing", tone: .working)
-
-        guard let baseURL = settings.backendURL else {
-            fail(BackendError.badURL.localizedDescription)
-            return
-        }
-
-        let plan = cleanupPlan()
-        let request = TranscriptionRequest(
-            baseURL: baseURL,
-            token: settings.trimmedToken,
-            audio: audio,
-            dictionaryJSON: DictionaryCodec.encodeForRequest(dictionary.entries),
-            cleanup: plan.engine == .worker ? plan.level : .none,
-            appName: capturedAppName
-        )
-        let client = self.client
         let ticket = beginJob()
-
-        Task { @MainActor in
+        let captureID = recordingID
+        let plan = DictationPlan(settings: settings, entries: dictionary.entries, appName: capturedAppName)
+        processingTask = Task { @MainActor in
             do {
-                let response = try await client.transcribe(request)
-                if plan.engine == .worker {
-                    guard self.stillCurrent(ticket) else { return }
-                    self.finish(with: response, engine: .cloud, cleanupLabel: plan.level == .none ? "none" : "Worker")
-                    return
-                }
-                let raw = response.rawText ?? response.text
-                let sttMs = response.timing?.stt ?? 0
-                let result = await self.runCleanup(raw: raw, plan: plan)
-                guard self.stillCurrent(ticket) else { return }
-                self.finish(with: TranscriptionResponse(
-                    text: result.text, rawText: raw,
-                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
-                    engine: .cloud, cleanupLabel: result.label, warning: result.warning)
+                let audio = try await recorder.stop(id: captureID)
+                try Task.checkCancellation()
+                guard stillCurrent(ticket) else { return }
+                recordingID = nil
+                self.play(.stop)
+                recoveryAudio = audio
+                recoveryPlan = plan
+                recoveryAvailable = true
+                await process(audio: audio, plan: plan, ticket: ticket)
             } catch {
-                guard self.stillCurrent(ticket) else { return }
-                self.fail(error.localizedDescription)
-            }
-        }
-    }
-
-    /// Speech straight from the app to an OpenAI-compatible provider, then the cleanup stage.
-    private func transcribeDirect(_ audio: Data) {
-        guard let endpoint = settings.directSttEndpoint() else {
-            fail("Pick a speech provider with a model and base URL in Settings → Providers.")
-            return
-        }
-        let preset = ProviderPreset.preset(id: settings.directSttProvider)
-        if preset.needsKey && (endpoint.apiKey ?? "").isEmpty {
-            fail(DirectError.missingKey(preset.name).localizedDescription)
-            return
-        }
-        StatusOverlay.shared.show("Transcribing via \(endpoint.providerName)", tone: .working)
-        let plan = cleanupPlan()
-        let vocabulary = DirectClient.vocabulary(from: dictionary.entries)
-        let direct = self.direct
-        let ticket = beginJob()
-
-        Task { @MainActor in
-            do {
-                let started = Date()
-                let raw = try await direct.transcribe(audio: audio, endpoint: endpoint, vocabulary: vocabulary)
-                let sttMs = Date().timeIntervalSince(started) * 1000
-                let result = await self.runCleanup(raw: raw, plan: plan)
-                guard self.stillCurrent(ticket) else { return }
-                self.finish(with: TranscriptionResponse(
-                    text: result.text, rawText: raw,
-                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
-                    engine: .direct, cleanupLabel: result.label, warning: result.warning)
-            } catch {
-                guard self.stillCurrent(ticket) else { return }
-                self.fail(error.localizedDescription)
-            }
-        }
-    }
-
-    struct CleanupPlan {
-        var engine: CleanupEngine
-        var level: CleanupLevel
-        var entries: [DictionaryEntry]
-        var baseURL: URL?
-        var token: String?
-        var appName: String?
-        var direct: DirectEndpoint?
-        var directNeedsKey: Bool
-    }
-
-    private func cleanupPlan() -> CleanupPlan {
-        CleanupPlan(engine: settings.cleanupEngine, level: settings.cleanup, entries: dictionary.entries,
-                    baseURL: settings.backendURL, token: settings.trimmedToken, appName: capturedAppName,
-                    direct: settings.directChatEndpoint(),
-                    directNeedsKey: ProviderPreset.preset(id: settings.directChatProvider).needsKey)
-    }
-
-    struct CleanupResult {
-        var text: String
-        var ms: Int
-        var label: String
-        /// Set when the engine failed and the raw transcript was used instead.
-        var warning: String?
-    }
-
-    /// The cleanup stage for a transcript already in hand. The Worker applies the dictionary
-    /// post-pass itself; every other path runs the Swift port so the result is the same.
-    ///
-    /// Never throws: a cleanup engine that is down, overloaded or misconfigured must not
-    /// cost the user the words they just said. Transient failures get one retry; after
-    /// that the raw transcript goes through the dictionary and is inserted with a warning.
-    private func runCleanup(raw: String, plan: CleanupPlan) async -> CleanupResult {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return CleanupResult(text: "", ms: 0, label: "none") }
-        let fallback = DictionaryReplacer.apply(trimmed, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard plan.level != .none else { return CleanupResult(text: fallback, ms: 0, label: "none") }
-
-        let started = Date()
-        var attempt = 0
-        while true {
-            attempt += 1
-            do {
-                var result = try await cleanupOnce(trimmed, plan: plan)
-                if attempt > 1 { result.label += " (after a retry)" }
-                return result
-            } catch {
-                let transient = AppController.isTransientCleanupError(error)
-                Log.app.error("Cleanup attempt \(attempt, privacy: .public) failed (\(transient ? "transient" : "permanent", privacy: .public)): \(error.localizedDescription, privacy: .public)")
-                if transient && attempt == 1 {
-                    StatusOverlay.shared.show("Cleanup failed; retrying", tone: .working)
-                    try? await Task.sleep(for: .seconds(AppController.cleanupRetryDelay))
-                    continue
-                }
-                let ms = Int(Date().timeIntervalSince(started) * 1000)
-                let why = AppController.shortCleanupFailure(error)
-                return CleanupResult(text: fallback, ms: ms,
-                                     label: "failed (\(why)); raw text kept",
-                                     warning: "Cleanup unavailable (\(why)); inserted the raw transcript")
-            }
-        }
-    }
-
-    /// Worth one retry: the provider is unreachable, overloaded or throwing 5xx. Bad keys,
-    /// bad configuration and rejected requests are not going to pass a second later.
-    nonisolated static func isTransientCleanupError(_ error: Error) -> Bool {
-        switch error {
-        case DirectError.transport, BackendError.transport: return true
-        case DirectError.http(_, let status, _): return AppController.isTransientStatus(status)
-        case BackendError.http(let status, _): return AppController.isTransientStatus(status)
-        case is URLError: return true
-        default: return false
-        }
-    }
-
-    nonisolated static func isTransientStatus(_ status: Int) -> Bool {
-        status == 408 || status == 429 || status >= 500
-    }
-
-    /// A few words for the pill and the history row.
-    nonisolated static func shortCleanupFailure(_ error: Error) -> String {
-        switch error {
-        case DirectError.http(let provider, let status, _): return "\(provider) \(status)"
-        case BackendError.http(let status, _): return "Worker \(status)"
-        case DirectError.transport, BackendError.transport, is URLError: return "no connection"
-        case DirectError.missingKey(let provider): return "no \(provider) key"
-        default: return String(error.localizedDescription.prefix(60))
-        }
-    }
-
-    /// One attempt at the selected engine. Throws on anything but success.
-    private func cleanupOnce(_ trimmed: String, plan: CleanupPlan) async throws -> CleanupResult {
-        let started = Date()
-        switch plan.engine {
-        case .worker:
-            guard let baseURL = plan.baseURL else { throw BackendError.badURL }
-            StatusOverlay.shared.show("Cleaning up", tone: .working)
-            let response = try await client.cleanup(CleanupRequest(
-                baseURL: baseURL, token: plan.token, text: trimmed,
-                dictionaryJSON: DictionaryCodec.encodeForRequest(plan.entries), cleanup: plan.level, appName: plan.appName))
-            return CleanupResult(text: response.text,
-                                 ms: Int(response.timing?.cleanup ?? Date().timeIntervalSince(started) * 1000),
-                                 label: "Worker")
-        case .direct:
-            guard let endpoint = plan.direct else {
-                throw DirectError.badResponse("a usable cleanup provider (check Settings → Providers)")
-            }
-            if plan.directNeedsKey && (endpoint.apiKey ?? "").isEmpty {
-                throw DirectError.missingKey(endpoint.providerName)
-            }
-            StatusOverlay.shared.show("Cleaning up via \(endpoint.providerName)", tone: .working)
-            let reply = try await direct.chat(
-                endpoint: endpoint,
-                system: CleanupPrompt.instructions(level: plan.level, entries: plan.entries),
-                user: CleanupPrompt.userPrompt(trimmed))
-            var text = CleanupPrompt.sanitize(reply)
-            var label = "Direct: \(endpoint.label)"
-            if text.isEmpty || AppleCleanup.similarity(raw: trimmed, cleaned: text) < 0.5 {
-                label += " (off-script; raw text kept)"
-                text = trimmed
-            }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return CleanupResult(text: DictionaryReplacer.apply(text, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines),
-                                 ms: ms, label: label)
-        case .apple:
-            StatusOverlay.shared.show("Cleaning up on this Mac", tone: .working)
-            var text = trimmed
-            var label = "Apple on-device model"
-            do {
-                text = try await AppleCleanup.shared.clean(trimmed, level: plan.level, entries: plan.entries)
-            } catch let error as AppleCleanupError {
-                if case .declined(let why) = error {
-                    label = "Apple model declined (\(why)); raw text kept"
-                    Log.app.notice("Apple cleanup declined: \(why, privacy: .public)")
+                guard stillCurrent(ticket), !Task.isCancelled else { return }
+                if error is CancellationError || isRecorderCancelled(error) { return }
+                if case RecorderError.tooShort = error {
+                    cancelProcessingWatchdog()
+                    state = .idle
+                    StatusOverlay.shared.hide()
                 } else {
-                    throw error
+                    fail(error.localizedDescription)
                 }
             }
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            return CleanupResult(text: DictionaryReplacer.apply(text, entries: plan.entries).trimmingCharacters(in: .whitespacesAndNewlines),
-                                 ms: ms, label: label)
         }
     }
 
-    /// On-device Parakeet over the whole recording, then whichever cleanup engine is
-    /// selected. The whole clip, deliberately: FluidAudio's sliding-window streaming (Aside
-    /// 0.3.0 to 0.3.4 decoded while the key was held) drops the words that straddle each
-    /// 11 s window seam and garbles the last ones, every time, on a 30 s clip; the offline
-    /// path gets them all and costs about 20 ms per second of audio on Apple silicon.
-    private func transcribeLocally(_ audio: Data) {
-        let transcriber = LocalTranscriber.shared
-        StatusOverlay.shared.show(
-            transcriber.state == .ready ? "Transcribing on this Mac" : "Loading speech model (first time takes a while)",
-            tone: .working
-        )
-        let pcm = WAV.pcm16(fromFile: audio)
-        let plan = cleanupPlan()
-        let ticket = beginJob()
+    private func process(audio: Data, plan: DictationPlan, ticket: Int) async {
+        StatusOverlay.shared.show("Transcribing", tone: .working)
+        do {
+            let result = try await pipeline.run(audio: audio, plan: plan) { [weak self] raw in
+                await self?.saveCheckpoint(raw, ticket: ticket)
+            }
+            guard stillCurrent(ticket), !Task.isCancelled else { return }
+            finishPipeline(result)
+        } catch {
+            guard stillCurrent(ticket), !Task.isCancelled else { return }
+            fail(error.localizedDescription)
+        }
+    }
 
-        Task { @MainActor in
-            do {
-                let started = Date()
-                let raw = try await transcriber.transcribe(pcm16: pcm)
-                let sttMs = Date().timeIntervalSince(started) * 1000
-                let result = await self.runCleanup(raw: raw, plan: plan)
-                guard self.stillCurrent(ticket) else { return }
-                self.finish(with: TranscriptionResponse(
-                    text: result.text, rawText: raw,
-                    timing: .init(stt: sttMs, cleanup: Double(result.ms), total: sttMs + Double(result.ms))),
-                    engine: .local, cleanupLabel: result.label, warning: result.warning)
-            } catch {
-                guard self.stillCurrent(ticket) else { return }
-                self.fail(error.localizedDescription)
+    private func saveCheckpoint(_ raw: PipelineResult, ticket: Int) {
+        guard stillCurrent(ticket) else { return }
+        checkpoint = raw
+        let id = recoveryRecordID ?? UUID()
+        recoveryRecordID = id
+        if !raw.text.isEmpty {
+            DictationHistory.shared.add(DictationRecord(id: id, date: Date(), engine: raw.engine,
+                appName: capturedAppName, rawText: raw.raw, finalText: raw.text, sttMs: raw.sttMs,
+                cleanupMs: 0, cleanupLabel: "Raw transcript saved; cleanup pending"), log: false)
+        }
+        StatusOverlay.shared.show("Cleaning up", tone: .working)
+    }
+
+    private func finishPipeline(_ result: PipelineResult, warning: String? = nil) {
+        let insert = !recoveryDelivered
+        processingTask = nil
+        finish(with: TranscriptionResponse(text: result.text, rawText: result.raw,
+            timing: .init(stt: Double(result.sttMs), cleanup: Double(result.cleanupMs),
+                          total: Double(result.sttMs + result.cleanupMs))),
+            engine: result.engine, cleanupLabel: warning == nil ? result.cleanupLabel : "timed out; raw text kept",
+            warning: warning ?? result.warning, insert: insert)
+        recoveryDelivered = true
+        // Successful text is already in history; only failures retain temporary retry data.
+        if warning == nil, result.warning == nil { clearRecovery(discardRecord: false) }
+    }
+
+    func retryLastDictation() {
+        guard state != .starting, state != .recording, state != .processing,
+              let audio = recoveryAudio, let plan = recoveryPlan else { return }
+        state = .processing
+        let ticket = beginJob()
+        processingTask = Task { @MainActor in
+            if let checkpoint {
+                do {
+                    StatusOverlay.shared.show("Retrying cleanup", tone: .working)
+                    let result = try await pipeline.clean(checkpoint, plan: plan)
+                    guard stillCurrent(ticket), !Task.isCancelled else { return }
+                    finishPipeline(result)
+                } catch {
+                    guard stillCurrent(ticket), !Task.isCancelled else { return }
+                    fail(error.localizedDescription)
+                }
+            } else {
+                await process(audio: audio, plan: plan, ticket: ticket)
             }
         }
     }
 
-    private func finish(with response: TranscriptionResponse, engine: TranscriptionMode, cleanupLabel: String, warning: String? = nil) {
+    private func clearRecovery(discardRecord: Bool) {
+        if discardRecord, !recoveryDelivered, let id = recoveryRecordID { DictationHistory.shared.remove(ids: [id]) }
+        recoveryAudio = nil
+        recoveryPlan = nil
+        checkpoint = nil
+        recoveryRecordID = nil
+        recoveryAvailable = false
+        recoveryDelivered = false
+    }
+
+    private func isRecorderCancelled(_ error: Error) -> Bool {
+        if case RecorderError.cancelled = error { return true }; return false
+    }
+
+    private func cancelCapture() {
+        guard let id = recordingID else { return }
+        recordingID = nil
+        Task { await recorder.cancel(id: id) }
+    }
+
+    nonisolated static func isTransientCleanupError(_ error: Error) -> Bool { DictationPipeline.isTransient(error) }
+    nonisolated static func isTransientStatus(_ status: Int) -> Bool { status == 408 || status == 429 || status >= 500 }
+    nonisolated static func shortCleanupFailure(_ error: Error) -> String { DictationPipeline.shortFailure(error) }
+
+    private func finish(with response: TranscriptionResponse, engine: TranscriptionMode, cleanupLabel: String, warning: String? = nil, insert: Bool = true) {
         cancelProcessingWatchdog()
         let text = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
         lastText = text
@@ -806,13 +651,23 @@ final class AppController: ObservableObject {
             StatusOverlay.shared.flash("Nothing was said", tone: .failure)
             return
         }
-        let outcome = TextInserter.insert(text)
-        DictationHistory.shared.add(DictationRecord(
+        let outcome: TextInserter.Outcome
+        if insert { outcome = TextInserter.insert(text) }
+        else {
+            // The raw fallback was already inserted. A retry is copied for review, never
+            // appended to whatever document happens to have focus now.
+            copyLastToClipboard()
+            outcome = .clipboardOnly
+        }
+        DictationHistory.shared.add(DictationRecord(id: recoveryRecordID ?? UUID(),
             date: Date(), engine: engine, appName: capturedAppName,
             rawText: response.rawText ?? text, finalText: text,
             sttMs: Int(response.timing?.stt ?? 0), cleanupMs: Int(response.timing?.cleanup ?? 0),
             insertion: outcome.historyLabel, cleanupLabel: cleanupLabel))
-        if let message = outcome.userMessage {
+        if !insert {
+            state = .idle
+            StatusOverlay.shared.flash("Retried text copied; paste to replace the earlier text", tone: .working, after: 3)
+        } else if let message = outcome.userMessage {
             state = .failed(message)
             StatusOverlay.shared.flash(message, tone: .failure)
             resetStateSoon()
@@ -845,7 +700,7 @@ final class AppController: ObservableObject {
         cancelProcessingWatchdog()
         rightOptionDown = false
         startTicket += 1
-        Task { await recorder.cancel() }
+        cancelCapture()
         state = .failed(message)
         StatusOverlay.shared.flash(message, tone: .failure, after: 4)
         Log.app.error("\(message, privacy: .public)")
@@ -880,6 +735,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Unit tests must never install global taps, request permissions or load models.
+        guard NSClassFromString("XCTestCase") == nil else { return }
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.accessory)
             AppController.shared.startMonitoring()
@@ -897,7 +754,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The dictionary autosave is debounced; an edit made in the last half second before
     /// quitting (or before Sparkle relaunches for an update) still needs to reach the disk.
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { DictionaryStore.shared.save() }
+        guard NSClassFromString("XCTestCase") == nil else { return }
+        MainActor.assumeIsolated { DictionaryStore.shared.save(); DictationHistory.shared.flushBeforeTermination() }
     }
 
     /// First run must not be silent: without Microphone there is no audio, and without
@@ -967,6 +825,10 @@ private struct MenuContent: View {
             controller.toggle()
         }
         .keyboardShortcut("d")
+
+        if controller.recoveryAvailable {
+            Button("Retry Last Dictation") { controller.retryLastDictation() }
+        }
 
         if !controller.lastText.isEmpty {
             Button("Copy Last Transcript") { controller.copyLastToClipboard() }

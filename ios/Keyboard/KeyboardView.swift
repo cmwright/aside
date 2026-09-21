@@ -66,10 +66,10 @@ struct KeyboardRootView: View {
                 // No session yet: the mic itself opens the app to start one.
                 micFace
                     .gesture(DragGesture(minimumDistance: 0).onEnded { _ in
-                        model.openApp(KeyboardModel.startSessionURL)
+                        model.openForDictation()
                     })
                     .accessibilityAddTraits(.isButton)
-                    .accessibilityLabel("Open Aside to start a session")
+                    .accessibilityLabel("Open Aside and start dictating")
             } else {
                 micFace
                     .scaleEffect(holding ? 0.94 : 1)
@@ -98,7 +98,7 @@ struct KeyboardRootView: View {
     }
 
     private var micCaption: String {
-        if model.state.isTappableForSession { return "Tap to open Aside and start a session" }
+        if model.state.isTappableForSession { return "Tap to open Aside and start dictating" }
         if model.isLatched { return "Tap to stop" }
         switch model.tapBehavior {
         case .latch: return "Tap to talk · tap again to stop"

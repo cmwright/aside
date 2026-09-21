@@ -18,6 +18,7 @@ struct AsideControlBundle: WidgetBundle {
     var body: some Widget {
         if #available(iOS 26.0, *) {
             DictationControl()
+            DictationLiveActivity()
         }
     }
 }

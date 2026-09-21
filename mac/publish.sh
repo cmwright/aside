@@ -20,6 +20,6 @@ if $GH release view "v$VERSION" >/dev/null 2>&1; then
   echo "Release v$VERSION exists; replacing its assets."
   $GH release upload "v$VERSION" "$ZIP" "$APPCAST" --clobber
 else
-  $GH release create "v$VERSION" "$ZIP" "$APPCAST" --title "Aside $VERSION" --notes "$NOTES"
+  $GH release create "v$VERSION" "$ZIP" "$APPCAST" --target "$(git rev-parse HEAD)" --title "Aside $VERSION" --notes "$NOTES"
 fi
 echo "Published: $($GH release view "v$VERSION" --json url -q .url)"

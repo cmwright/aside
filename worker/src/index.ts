@@ -120,9 +120,6 @@ async function handleTranscription(request: Request, env: Env): Promise<Response
     return errorResponse('DEEPGRAM_API_KEY is not configured on the Worker', 500);
   }
   const wantsCleanup = level !== 'none' && cleanupModel !== null;
-  if (wantsCleanup && groqKey === '') {
-    return errorResponse('GROQ_API_KEY is not configured on the Worker (needed for cleanup)', 500);
-  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -140,7 +137,7 @@ async function handleTranscription(request: Request, env: Env): Promise<Response
           );
     const sttMs = Date.now() - sttStartedAt;
 
-    const { text, cleanupMs } = await cleanAndReplace({
+    const { text, cleanupMs, warning } = await cleanAndReplace({
       rawText,
       level,
       entries,
@@ -152,6 +149,7 @@ async function handleTranscription(request: Request, env: Env): Promise<Response
     const body: TranscriptionResponse = {
       text,
       raw_text: rawText,
+      ...(warning ? { warning } : {}),
       timing_ms: { stt: sttMs, cleanup: cleanupMs, total: Date.now() - startedAt },
     };
     return json(body);
@@ -211,14 +209,11 @@ async function handleCleanup(request: Request, env: Env): Promise<Response> {
   const groqKey = (env.GROQ_API_KEY ?? '').trim();
   const cleanupModel = resolveCleanupModel(env.CLEANUP_MODEL);
   const wantsCleanup = level !== 'none' && cleanupModel !== null;
-  if (wantsCleanup && groqKey === '') {
-    return errorResponse('GROQ_API_KEY is not configured on the Worker (needed for cleanup)', 500);
-  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const { text, cleanupMs } = await cleanAndReplace({
+    const { text, cleanupMs, warning } = await cleanAndReplace({
       rawText,
       level,
       entries,
@@ -229,6 +224,7 @@ async function handleCleanup(request: Request, env: Env): Promise<Response> {
     const response: TranscriptionResponse = {
       text,
       raw_text: rawText,
+      ...(warning ? { warning } : {}),
       timing_ms: { stt: 0, cleanup: cleanupMs, total: Date.now() - startedAt },
     };
     return json(response);
@@ -247,25 +243,34 @@ async function cleanAndReplace(options: {
   cleanupModel: string | null;
   groqKey: string;
   signal: AbortSignal;
-}): Promise<{ text: string; cleanupMs: number }> {
+}): Promise<{ text: string; cleanupMs: number; warning?: string }> {
   const { rawText, level, entries, cleanupModel, groqKey, signal } = options;
   let text = rawText;
   let cleanupMs = 0;
+  let warning: string | undefined;
   if (cleanupModel !== null && level !== 'none' && rawText.trim() !== '') {
     const cleanupStartedAt = Date.now();
-    text = await cleanupTranscript({
+    try {
+      if (!groqKey) throw new Error('cleanup key unavailable');
+      text = await cleanupTranscript({
       rawText,
       level,
       entries,
       model: cleanupModel,
       apiKey: groqKey,
       signal,
-    });
+      });
+      if (text.trim() === '') text = rawText;
+    } catch {
+      // The speech stage already succeeded. Never make its words depend on LLM uptime.
+      // Use a fixed warning; provider error bodies may echo the private transcript.
+      text = rawText;
+      warning = 'Cleanup unavailable; raw transcript kept';
+    }
     cleanupMs = Date.now() - cleanupStartedAt;
-    if (text.trim() === '') text = rawText;
   }
   // Deterministic dictionary post-pass: runs whether or not the LLM ran.
-  return { text: applyReplacements(text, entries).trim(), cleanupMs };
+  return { text: applyReplacements(text, entries).trim(), cleanupMs, ...(warning ? { warning } : {}) };
 }
 
 function providerFailure(error: unknown): Response {

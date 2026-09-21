@@ -136,6 +136,7 @@ struct DirectClient: Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            try Task.checkCancellation()
             throw DirectError.transport(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else { throw DirectError.badResponse("an HTTP response") }

@@ -143,8 +143,10 @@ final class LocalTranscriber: ObservableObject {
 
     /// Transcribe raw 16 kHz mono Int16 PCM. Loads the model first if needed.
     func transcribe(pcm16: Data) async throws -> String {
+        try Task.checkCancellation()
         if state != .ready { prepare() }
         if let loadTask { await loadTask.value }
+        try Task.checkCancellation()
         guard state == .ready else {
             if case .failed(let message) = state { throw LocalTranscriberError.modelUnavailable(message) }
             throw LocalTranscriberError.modelUnavailable("model is not loaded")

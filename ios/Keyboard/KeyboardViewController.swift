@@ -17,6 +17,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        hasDictationKey = true
         model.controller = self
 
         let host = UIHostingController(rootView: KeyboardRootView(model: model))

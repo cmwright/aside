@@ -46,7 +46,9 @@ final class SessionRecorder {
     /// `Recorder.trailingCapture` in the Mac app.
     nonisolated static let trailingCapture: Duration = .milliseconds(400)
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
+    /// A dropped capture or terminal engine failure must reach the session/keyboard state.
+    var inputUnavailable: (@MainActor (String, Bool) -> Void)?
     private let sink = PCMSink()
     private var observers: [any NSObjectProtocol] = []
 
@@ -156,7 +158,7 @@ final class SessionRecorder {
     /// True once the engine is actually pulling audio. Right after `startSession` it can
     /// be false for a moment (the audio session just activated, a Bluetooth headset is
     /// switching profiles) while the engine is retried in the background.
-    var isInputReady: Bool { isRunning && engine.isRunning }
+    var isInputReady: Bool { isRunning && !interrupted && engine.isRunning }
 
     func beginDictation() throws {
         guard isRunning else { throw RecorderError.notRunning }
@@ -207,11 +209,13 @@ final class SessionRecorder {
         // tap take the node's format at install time rather than the one queried a moment
         // ago; a mismatch there raises an exception instead of an error. The sink builds
         // its converter from whatever format the buffers actually carry.
-        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { @Sendable buffer, _ in
-            sink.append(buffer)
-        }
-        engine.prepare()
         do {
+            try ObjCException.catching {
+                input.installTap(onBus: 0, bufferSize: 4096, format: nil) { @Sendable buffer, _ in
+                    sink.append(buffer)
+                }
+                engine.prepare()
+            }
             try engine.start()
             AudioTrace.write("engine running: \(route), \(Int(format.sampleRate)) Hz × \(format.channelCount)")
         } catch {
@@ -233,6 +237,14 @@ final class SessionRecorder {
             let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
             let reason = raw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
             MainActor.assumeIsolated { self?.rebuild(reason: "route change (\(AudioTrace.name(of: reason)))") }
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.stopSession()
+                self.engine = AVAudioEngine()
+                self.inputUnavailable?("Audio services restarted. Open Aside to resume the session.", true)
+            }
         })
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             // Pull the one value out here: the Notification itself is not Sendable.
@@ -273,6 +285,7 @@ final class SessionRecorder {
                 if self.isDictating {
                     self.isDictating = false
                     self.sink.discard()
+                    self.inputUnavailable?("Microphone changed; the recording was interrupted. Please try again.", false)
                 }
                 self.sink.invalidateConverter()
                 self.engine.stop()
@@ -284,7 +297,10 @@ final class SessionRecorder {
                     Log.audio.error("Restart attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
+            guard let self, !Task.isCancelled else { return }
             AudioTrace.write("gave up restarting the engine after \(reason)")
+            self.stopSession()
+            self.inputUnavailable?("The microphone could not recover. Open Aside to start again.", true)
         }
     }
 
@@ -298,6 +314,7 @@ final class SessionRecorder {
             sink.discard()
             isDictating = false
             engine.stop()
+            inputUnavailable?("Audio was interrupted. Please try again when the microphone is available.", false)
         case .ended:
             interrupted = false
             resumeAfterInterruption()
@@ -326,6 +343,9 @@ final class SessionRecorder {
                     Log.audio.error("Resume attempt \(attempt, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
+            guard let self, !Task.isCancelled else { return }
+            self.stopSession()
+            self.inputUnavailable?("The microphone did not resume. Open Aside to start again.", true)
         }
     }
 }

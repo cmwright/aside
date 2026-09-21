@@ -10,13 +10,13 @@ options:
 packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
-    from: "2.0.0"
+    exactVersion: "2.4.0"
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    from: "0.12.4"
+    exactVersion: "0.15.6"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: "2.9.6"
+    exactVersion: "2.9.6"
 
 # Signing comes from Signing.xcconfig (git-ignored; see Signing.xcconfig.example).
 configFiles:
@@ -26,8 +26,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.3.6"
-    CURRENT_PROJECT_VERSION: "12"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "13"
     CODE_SIGN_STYLE: Manual
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     DEAD_CODE_STRIPPING: "YES"

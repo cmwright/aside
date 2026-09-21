@@ -91,7 +91,7 @@ struct PhoneSettingsView: View {
                 }
 
                 Section {
-                    Picker("Session length", selection: $phone.sessionLength) {
+                    Picker("End after inactivity", selection: $phone.sessionLength) {
                         ForEach(SessionLength.allCases) { length in
                             Text(length.title).tag(length)
                         }
@@ -99,7 +99,7 @@ struct PhoneSettingsView: View {
                 } header: {
                     SectionHeader("Session")
                 } footer: {
-                    Text("A session keeps the microphone alive in the background so the keyboard and the Control Center control can dictate without another app switch. Changing this applies to the next session.")
+                    Text("A session keeps the microphone alive in the background so the keyboard and the Control Center control can dictate without another app switch. The idle timer renews after each dictation and never ends a recording in progress. Until I end it disables the timer.")
                 }
 
                 Section {
@@ -213,12 +213,12 @@ private struct DirectProviderSection: View {
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
             if preset.needsKey {
-                SecureField("API key", text: $apiKey)
+                SecureField("API key", text: Binding(get: { apiKey }, set: { value in
+                    apiKey = value
+                    APIKeyStore.set(value, for: preset.id)
+                }))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .onChange(of: apiKey) { _, value in
-                        APIKeyStore.set(value, for: preset.id)
-                    }
             }
             Button(testing ? "Testing…" : "Test") { test() }
                 .disabled(testing || endpoint == nil)

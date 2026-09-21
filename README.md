@@ -30,12 +30,13 @@ signing notes are in [`mac/README.md`](mac/README.md).
    Accessibility (System Settings → Privacy & Security → Accessibility, switch Aside on).
    Accessibility is what lets it see the Right Option key and type into other apps. It
    notices the grant by itself; no relaunch needed.
-2. **Pick your engines** in Settings → Engines. The defaults work with nothing but
-   a Groq key; the fully offline setup needs no key at all.
+2. **Pick your engines** in Settings → Engines. For personal use, choose direct providers and enter your keys, or select the
+   fully offline engines. Existing installations keep their selected engines; a fresh
+   Mac install currently selects the optional Worker until you change it.
 
 | Stage | Options | Notes |
 | --- | --- | --- |
-| Speech to text | **On this Mac** (NVIDIA Parakeet v3 via [FluidAudio](https://github.com/FluidInference/FluidAudio)) · **A provider, directly** (Groq, Fireworks, OpenAI, or any OpenAI-compatible URL) · The Worker | Parakeet downloads about 470 MB once and runs on the Neural Engine while you are still holding the key. Audio never leaves the Mac. |
+| Speech to text | **On this Mac** (NVIDIA Parakeet v3 via [FluidAudio](https://github.com/FluidInference/FluidAudio)) · **A provider, directly** (Groq, Fireworks, OpenAI, or any OpenAI-compatible URL) · The Worker | Parakeet downloads about 470 MB once and transcribes the captured recording on the Neural Engine after you release the key. Audio never leaves the Mac. |
 | Cleanup | **A provider, directly** (Cerebras, Groq, Fireworks, OpenAI, Ollama, or custom) · **Apple on-device model** (macOS 26 with Apple Intelligence on) · The Worker · None | Cleanup fixes punctuation and capitalization, drops fillers and false starts at the Medium level, and applies your dictionary. It is told never to add content or answer a question that appears in the transcript. |
 
 API keys go in Settings → Providers and are stored in your login keychain. The
@@ -48,10 +49,16 @@ nothing leaves the machine; choosing Parakeet plus a provider sends only the tra
    Transcribing, then the text appears at your cursor. The trigger key is changeable in
    Settings.
 
-If cleanup fails (provider down, rate-limited, no connection) the app retries once and
-then inserts the raw transcript with your dictionary applied, and the pill says so. A
-dictation that takes more than a minute end to end is given up on with a message rather
-than left hanging; **Cancel Dictation** in the menu does the same by hand.
+Speech results are saved in Recent Dictations before cleanup starts. Cleanup has a
+10-second deadline per attempt and retries transient failures once; if it still fails,
+the app inserts the raw transcript with your dictionary applied. The overall processing
+watchdog preserves any speech result already received. **Cancel Dictation** cancels the
+pending work, and a newer recording cannot be affected by an older result.
+
+After a failure, **Retry Last Dictation** reuses the last recording or retries just its
+cleanup. If text was already inserted, the revised result is copied for you to review and
+paste over it. The retained recording is memory-only and is cleared on a new dictation,
+successful retry, cancellation or quit.
 
 The key is watched through a session event tap. macOS sometimes switches a tap off
 across sleep or when it thinks the process was slow; the app notices, re-enables it, and
@@ -101,6 +108,12 @@ your clipboard. If both fail, the text is left on the clipboard and the pill say
 
 ## Developing
 
+`bash scripts/verify.sh` runs the Mac tests (including shared iOS protocol tests), builds
+the iOS app and extensions, and runs Worker tests/typechecking. Install the Worker test
+dependencies first with `cd worker && npm ci`. Swift dependencies are pinned in both
+XcodeGen specifications. See [NEXT-RELEASE.md](NEXT-RELEASE.md) for device checks.
+
+
 ```sh
 ./mac/build.sh                       # xcodegen generate + xcodebuild (Debug, prints the .app path)
 ./mac/run.sh                         # build and launch
@@ -119,5 +132,7 @@ Signing setup is in [`mac/README.md`](mac/README.md).
 - A recording that never sees a key-up (screen lock, sleep) is stopped and sent after 90 s.
 - The Apple on-device cleanup model is timid at the Medium level and slower than the fast
   cloud hosts on older Apple Silicon.
-- The iPhone app is installed from Xcode onto your own device; there is no TestFlight build yet.
+- An iPhone keyboard cannot open the microphone itself. Tapping its mic without a live
+  session opens Aside and starts recording; return using the iOS breadcrumb. Sessions
+  renew while you use them, and iOS 26 adds Lock Screen/Dynamic Island controls.
 - Cannot ship on the Mac App Store: the Accessibility API requires the App Sandbox off.

@@ -20,11 +20,19 @@ is still true in iOS 26, with or without Full Access. So the work is split:
 Keeping the app's audio engine running is what keeps it alive in the background, so after
 one app switch per session every dictation is keyboard-only or control-only: tap, speak,
 tap, text appears. A control tapped with no session running opens Aside once, which starts
-the session and the recording.
+the session and the recording. Tapping the keyboard mic without a session now also
+opens Aside and starts a recording automatically. Return with the iOS back breadcrumb;
+tap the mic again to stop and insert. The return ID is saved so this still works if iOS
+recreates the keyboard while the app is open.
+
+On iOS 26, a Live Activity shows whether the session is ready, listening or transcribing
+on the Lock Screen and Dynamic Island, with Dictate/Stop controls. It displays no
+transcript. It uses the app's existing audio session; it does not let the keyboard access
+the microphone or bypass iOS foreground requirements for starting a cold session.
 
 ```
 ios/
-  project.yml        xcodegen spec: app target Aside, extension target AsideKeyboard
+  project.yml        xcodegen spec: app, keyboard and control/Live Activity extension
   build.sh           generic-iOS-device compile check, no signing
   Shared/AsideIPC.swift    the hand-off protocol, unit-tested from the Mac test target
   App/               the app: session engine, recorder, pipeline, four screens
@@ -38,7 +46,8 @@ ios/
 Everything platform-neutral is shared with the Mac app by reference, never copied:
 `Log.swift`, `Settings.swift`, `Dictionary.swift`, `DictionaryReplacer.swift`,
 `CleanupPrompt.swift`, `AppleCleanup.swift`, `LocalTranscriber.swift`,
-`Providers.swift`, `APIKeyStore.swift`, `DirectClient.swift` in the app, and `Trigger.swift`
+`Providers.swift`, `APIKeyStore.swift`, `DirectClient.swift`, `BackendClient.swift`,
+`DictationPipeline.swift`, `History.swift` and `PCMCapture.swift` in the app, and `Trigger.swift`
 in the keyboard. See `../mac/Sources`.
 
 ## Build
@@ -48,7 +57,7 @@ cd ios
 ./build.sh
 ```
 
-That runs `xcodegen generate` and compiles **both** targets for `generic/platform=iOS` with
+That runs `xcodegen generate` and compiles **all three** targets for `generic/platform=iOS` with
 `CODE_SIGNING_ALLOWED=NO`; it is the automated verification and needs a network connection
 the first time, to resolve FluidAudio into `ios/build`. To run it in the iOS Simulator
 instead, open the project in Xcode and pick an iPhone simulator as the destination; the App
@@ -169,10 +178,15 @@ only so the keyboard can reach the app through the App Group.
 - **Cleanup** — level (None / Light / Medium) and engine: Apple's on-device model (the
   default; needs iOS 26 and Apple Intelligence) or a direct provider. The dictionary
   post-pass always runs in Swift afterwards, exactly as on the Mac.
-- Home refuses to record until the chosen engines can actually run — model downloaded,
-  key present, Apple Intelligence available, microphone allowed — and says what is missing.
-- **Session length** — 5 minutes, 15 minutes, 1 hour, or until you end it. When it expires
-  the microphone is released and you get one notification.
+- Home checks the speech engine and microphone before recording. Cleanup is optional:
+  an unavailable model, missing cleanup key or provider failure keeps the raw transcript
+  with dictionary replacements. Recent Dictations receives the speech result before
+  cleanup runs. Home offers **Retry last dictation** after failures; its result stays
+  in the app for review instead of inserting into an old keyboard destination.
+- **Session length** — an idle timeout of 5 minutes, 15 minutes, 1 hour, or until you end
+  it. Dictation renews the timer; an active recording or transcription is allowed to
+  finish. When an idle session expires, the microphone is released and you get one
+  notification. Heartbeats stop the keyboard treating a dead app as an active session.
 
 The dictionary is the same JSON the Mac app writes, stored in the App Group container.
 
@@ -183,19 +197,22 @@ ambiguity, and every write is atomic:
 
 | File | Written by | Contents |
 | --- | --- | --- |
-| `session.json` | app | `active`, `startedAt`, `expiresAt`, `pid` |
+| `session.json` | app | `active`, `startedAt`, `expiresAt`, `pid`, `heartbeatAt`, `inputReady` |
 | `control.json` | app | `recording`: whether a control-started dictation is being recorded, for the toggle |
-| `commands/<uuid>.json` | keyboard or control | `start` / `stop` / `cancel`, `source`, plus ~40 characters of text before the cursor (keyboard only) |
+| `commands/<uuid>.json` | keyboard or control | `start` / `stop` / `cancel`, `source`, target `dictationID`, plus ~40 characters of text before the cursor (keyboard only) |
 | `results/<uuid>.json` | app | `recording` / `processing` / `done` / `failed`, the text, timings (keyboard only; the control's text goes to the clipboard) |
 
-The `start` command's id is the dictation's id and the key of its result file; `stop` and
-`cancel` are separate commands that apply to whatever is in flight, since only one dictation
-can be. Both sides post a Darwin notification (`com.codywright.aside.command`,
+`keyboard-handoff.json` holds the return ID for a cold keyboard launch. Dates use
+milliseconds since the epoch; legacy ISO 8601 files remain readable. The `start` command's
+ID is the dictation's ID and the key of its result file; `stop` and `cancel` include that
+ID, so an old command cannot stop a newer recording. Both sides post a Darwin notification (`com.codywright.aside.command`,
 `com.codywright.aside.result`) to wake the other, and both also poll every 250 ms while a
 dictation is in flight, because Darwin notifications are best-effort. Command and result
 files older than 10 minutes are deleted when a session starts.
 
-Nothing is buffered between dictations: the audio engine keeps running so the app stays
+Only the last failed recording is retained in memory for retry; it is never saved as an
+audio file and is cleared by a new dictation, successful retry, cancellation or app exit.
+No idle microphone audio is buffered between dictations: the audio engine keeps running so the app stays
 alive, but the converter output is dropped on the floor unless a dictation is actually in
 flight. Transcripts are held in memory and the result file is deleted as soon as the
 keyboard has read it.

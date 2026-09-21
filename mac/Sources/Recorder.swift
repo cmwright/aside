@@ -55,6 +55,7 @@ actor Recorder {
 
     private let observerBox = ObserverBox()
     private(set) var isRecording = false
+    private var captureID: UUID?
 
     /// Stopping the engine within a few hundred milliseconds of starting it, while the start
     /// cue's audio queue is being torn down in the same process, has crashed inside CoreAudio:
@@ -87,8 +88,11 @@ actor Recorder {
     /// CoreAudio UID of the microphone to record from; nil or empty means the system default.
     private var preferredInputUID: String?
 
-    func start(inputDeviceUID: String? = nil) throws {
-        guard !isRecording else { return }
+    func start(inputDeviceUID: String? = nil, id: UUID = UUID()) throws {
+        if isRecording {
+            guard captureID != id else { return }
+            cancel(id: captureID)
+        }
         preferredInputUID = inputDeviceUID
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
@@ -115,6 +119,7 @@ actor Recorder {
             throw error
         }
         isRecording = true
+        captureID = id
         Log.audio.info("Recording started")
     }
 
@@ -190,8 +195,8 @@ actor Recorder {
                 "the input (\(Int(format.sampleRate)) Hz × \(format.channelCount)) could not be tapped: \(error.localizedDescription)")
         }
         let wasRunning = engine.isRunning
-        engine.prepare()
         do {
+            try ObjCException.catching { engine.prepare() }
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
@@ -240,15 +245,18 @@ actor Recorder {
     /// Keeps capturing for `trailingCapture`, then stops and returns a finished WAV file.
     /// Throws `.tooShort` for an accidental tap and `.cancelled` when `cancel()` ran while
     /// the tail was being captured.
-    func stop() async throws -> Data {
+    func stop(id expected: UUID? = nil) async throws -> Data {
         guard isRecording else { throw RecorderError.tooShort }
+        let id = captureID
+        guard expected == nil || expected == id else { throw RecorderError.cancelled }
         // What was in hand when the key came up decides "too short"; the tail is not the
         // user's doing. The tap lags real time by up to a block, so the total minus the
         // tail is the other estimate and the larger one is used.
         let heldAtKeyUp = sink.capturedSeconds
-        try? await Task.sleep(for: Recorder.trailingCapture)
-        guard isRecording else { throw RecorderError.cancelled }
+        try await Task.sleep(for: Recorder.trailingCapture)
+        guard isRecording, captureID == id else { throw RecorderError.cancelled }
         isRecording = false
+        captureID = nil
         engine.inputNode.removeTap(onBus: 0)
         stopEngineSoon()
 
@@ -263,9 +271,10 @@ actor Recorder {
     }
 
     /// Throws away whatever has been captured; used when a recording is abandoned.
-    func cancel() {
-        guard isRecording else { return }
+    func cancel(id: UUID? = nil) {
+        guard isRecording, id == nil || captureID == id else { return }
         isRecording = false
+        captureID = nil
         engine.inputNode.removeTap(onBus: 0)
         stopEngineSoon()
         sink.discard()
