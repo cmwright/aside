@@ -50,8 +50,8 @@ enum WAV {
 /// appends to a lock-protected buffer, but only between `beginCapture` and `endCapture`.
 /// Outside a capture `append` converts nothing and stores nothing, which is how the phone
 /// keeps its engine running for a whole session while holding no audio between dictations.
-/// No actor hops, no allocations beyond the output buffer, so the audio callback never
-/// blocks on the main actor.
+/// Conversion uses a reusable output buffer and a separate lock; capture state is held
+/// only while copying PCM. Storage is preallocated and bounded to the recording limit.
 final class PCMSink: @unchecked Sendable {
     /// One-shot flag for the converter's input block. A reference type because Swift 6
     /// types that block as `@Sendable` even though `convert` runs it synchronously, and a
@@ -63,6 +63,9 @@ final class PCMSink: @unchecked Sendable {
     private let lock = NSLock()
     private var pcm = Data()
     private var capturing = false
+    private let conversionLock = NSLock()
+    private var outputBuffer: AVAudioPCMBuffer?
+    private var captureGeneration: UInt64 = 0
     private var converter: AVAudioConverter?
     private var inputFormat: AVAudioFormat?
     private let handoff = Handoff()
@@ -81,6 +84,8 @@ final class PCMSink: @unchecked Sendable {
     func beginCapture(levelListener: (@Sendable (Float) -> Void)? = nil) {
         lock.lock()
         pcm.removeAll(keepingCapacity: true)
+        pcm.reserveCapacity(WAV.sampleRate * 2 * 92)
+        captureGeneration &+= 1
         capturing = true
         self.levelListener = levelListener
         lock.unlock()
@@ -115,17 +120,22 @@ final class PCMSink: @unchecked Sendable {
     /// Drops the cached converter so the next buffer rebuilds it. Used when the engine
     /// reports a configuration or route change (Bluetooth headset switching formats, etc).
     func invalidateConverter() {
-        lock.lock()
+        conversionLock.lock()
         converter = nil
         inputFormat = nil
-        lock.unlock()
+        outputBuffer = nil
+        conversionLock.unlock()
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
-        defer { lock.unlock() }
-        guard capturing else { return }
+        let generation = captureGeneration
+        let shouldCapture = capturing
+        lock.unlock()
+        guard shouldCapture else { return }
 
+        conversionLock.lock()
+        defer { conversionLock.unlock() }
         if converter == nil || inputFormat != buffer.format {
             inputFormat = buffer.format
             converter = AVAudioConverter(from: buffer.format, to: outputFormat)
@@ -135,7 +145,11 @@ final class PCMSink: @unchecked Sendable {
 
         let ratio = outputFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 1024
-        guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return }
+        if outputBuffer == nil || outputBuffer!.frameCapacity < capacity {
+            outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity)
+        }
+        guard let out = outputBuffer else { return }
+        out.frameLength = 0
 
         handoff.done = false
         var error: NSError?
@@ -152,10 +166,16 @@ final class PCMSink: @unchecked Sendable {
 
         guard status != .error, out.frameLength > 0, let channel = out.int16ChannelData else { return }
         let frames = Int(out.frameLength)
+        lock.lock()
+        guard capturing, captureGeneration == generation else { lock.unlock(); return }
+        // A stalled controller must not let capture grow without bound.
+        let remaining = max(0, WAV.sampleRate * 2 * 92 - pcm.count)
         channel[0].withMemoryRebound(to: UInt8.self, capacity: frames * 2) { bytes in
-            pcm.append(bytes, count: frames * 2)
+            pcm.append(bytes, count: min(frames * 2, remaining))
         }
-        if let levelListener {
+        let listener = levelListener
+        lock.unlock()
+        if let levelListener = listener {
             var sum: Float = 0
             for index in 0..<frames { let v = Float(channel[0][index]) / 32768; sum += v * v }
             // RMS on a square-root curve: quiet speech still moves the meter.

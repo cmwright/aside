@@ -1,3 +1,12 @@
+# Automated verification
+
+Run `bash scripts/verify.sh` from the repository root (Xcode, XcodeGen and Node required;
+run `npm ci` in `worker` first). The Mac tests include the shared pipeline and iOS IPC
+regressions. Model integration tests remain opt-in. The script also compiles all iOS
+targets and runs Worker tests/typechecking; it never installs or publishes an app.
+
+Physical-device regression checks for 0.4.0 are in [NEXT-RELEASE.md](NEXT-RELEASE.md).
+
 # Testing checklist: the Worker path (about 10 minutes)
 
 This walks through the optional self-hosted Worker end to end. For everyday use the app
@@ -104,8 +113,8 @@ the menu's first lines show the state, the engine in use, and a summary of the l
 
 In each: click to place the cursor, hold **Right Option**, say one sentence, let go. Then try the hands-free gesture: double-tap Right Option, the pill changes to "Listening — tap Right Option to stop", speak, tap once.
 While held the pill says Listening; on release it says Transcribing for about a second;
-then the text appears at the cursor. The Worker terminal logs one
-`POST /v1/audio/transcriptions 200` line per attempt.
+then the text appears at the cursor. The Worker terminal logs `POST /v1/audio/transcriptions 200`, followed by a separate
+cleanup request when cleanup is enabled. The app saves the speech result between them.
 
 1. **Notes** (new note). Text is inserted through the Accessibility path; your clipboard
    is untouched. Type a word, leave the cursor right after its last letter and dictate
@@ -135,10 +144,9 @@ Then, in any of them:
    The status line under it reads "Downloading / loading Parakeet v3…" then
    "Parakeet v3 ready". The first time this downloads about 470 MB; if the model is
    already cached (the test suite may have fetched it) it only compiles, about a minute.
-2. Hold Right Option and dictate. The pill says "Finishing up" (Parakeet already decoded
-   most of the audio while you were talking), then "Cleaning up" while the Worker runs
-   the LLM pass on the text. If the model was still loading when you pressed the key it
-   says "Transcribing on this Mac" instead and decodes the whole recording now.
+2. Hold Right Option and dictate. After release, Parakeet transcribes the completed
+   recording, then the configured cleanup engine runs. If cleanup fails, the raw speech
+   result remains available and is inserted with dictionary replacements.
 3. Set Cleanup to **None** and remove any dictionary replacements to see it work with the
    Worker stopped: nothing leaves the Mac.
 4. Expect Parakeet to join brand names into one word ("acmecloud"); the dictionary

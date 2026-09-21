@@ -103,6 +103,7 @@ final class DictationHistory: ObservableObject {
     let fileURL: URL
     private let settings: AppSettings
     private var retentionObserver: AnyCancellable?
+    private let writer = DispatchQueue(label: "com.codywright.aside.history", qos: .utility)
 
     /// `~/Library/Application Support/Aside/history.json` on the Mac; the app's own
     /// Application Support on the iPhone (not the App Group: the extensions never need it).
@@ -136,12 +137,16 @@ final class DictationHistory: ObservableObject {
 
     var retention: HistoryRetention { settings.historyRetention }
 
-    func add(_ record: DictationRecord) {
+    func add(_ record: DictationRecord, log: Bool = true) {
+        records.removeAll { $0.id == record.id }
         records.insert(record, at: 0)
         prune()
         save()
         #if os(macOS)
-        if settings.logDictationsToFile { appendToLog(record) }
+        if log && settings.logDictationsToFile {
+            let url = Self.logFileURL
+            writer.async { Self.appendToLog(record, to: url) }
+        }
         #endif
     }
 
@@ -211,20 +216,36 @@ final class DictationHistory: ObservableObject {
     }
 
     private func save() {
-        guard retention.persists, !records.isEmpty else {
-            try? FileManager.default.removeItem(at: fileURL)
-            return
-        }
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try DictationHistory.encoder.encode(records).write(to: fileURL, options: .atomic)
-        } catch {
-            Log.store.error("Could not write history.json: \(error.localizedDescription, privacy: .public)")
+        let snapshot = retention.persists ? records : []
+        let url = fileURL
+        // Serial ordering matters: a queued save must never resurrect history after Clear
+        // or a switch back to memory-only storage.
+        writer.async {
+            do {
+                guard !snapshot.isEmpty else {
+                    if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+                    return
+                }
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                encoder.outputFormatting = [.sortedKeys]
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try encoder.encode(snapshot).write(to: url, options: .atomic)
+            } catch {
+                Log.store.error("Could not write history.json: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
+    func flush() async {
+        await withCheckedContinuation { continuation in writer.async { continuation.resume() } }
+    }
+
+    /// Only used during termination, when losing a pending write would be worse than waiting.
+    func flushBeforeTermination() { writer.sync {} }
+
     #if os(macOS)
-    private func appendToLog(_ record: DictationRecord) {
+    private nonisolated static func appendToLog(_ record: DictationRecord, to url: URL) {
         struct Line: Encodable {
             let time: String, engine: String, app: String?, raw: String, final: String
             let stt_ms: Int, cleanup_ms: Int, insertion: String?, cleanup: String
@@ -235,7 +256,6 @@ final class DictationHistory: ObservableObject {
             stt_ms: record.sttMs, cleanup_ms: record.cleanupMs, insertion: record.insertion,
             cleanup: record.cleanupLabel)
         do {
-            let url = DictationHistory.logFileURL
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             var data = try JSONEncoder().encode(line)
             data.append(0x0A)

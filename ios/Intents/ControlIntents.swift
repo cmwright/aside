@@ -29,7 +29,8 @@ struct ToggleDictationIntent: SetValueIntent {
             trace.outcome = "no app group container"
             throw AsideIPCError.noContainer
         }
-        try store.writeCommand(DictationCommand(action: value ? .start : .stop, source: .control))
+        try store.writeCommand(DictationCommand(action: value ? .start : .stop, source: .control,
+            dictationID: value ? nil : store.readControlState()?.dictationID))
         DarwinNotifier.post(AsideIPC.commandNotification)
         trace.sessionActive = store.activeSession() != nil
         trace.canContinueInForeground = systemContext.currentMode.canContinueInForeground
@@ -77,7 +78,7 @@ struct DictateIntent: AppIntent {
             }
             return .result(value: "")
         }
-        try store.writeCommand(DictationCommand(action: .stop, source: .control))
+        try store.writeCommand(DictationCommand(action: .stop, source: .control, dictationID: id))
         DarwinNotifier.post(AsideIPC.commandNotification)
         let deadline = Date().addingTimeInterval(DictateIntent.resultTimeout)
         while Date() < deadline {

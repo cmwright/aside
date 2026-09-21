@@ -34,6 +34,11 @@ struct HomeView: View {
                     .padding(.top, 16)
                     hero
                     levels
+                    if controller.recoveryAvailable {
+                        Button("Retry last dictation") { controller.retryLastDictation() }
+                            .disabled(controller.phase == .processing || controller.phase == .listening)
+                            .padding(.top, 12)
+                    }
                     if !controller.lastText.isEmpty { lastResultCard.padding(.horizontal, 20).padding(.top, 22) }
                 }
                 .padding(.bottom, 24)

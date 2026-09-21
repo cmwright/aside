@@ -33,6 +33,7 @@ enum AsideIPC {
 
     /// Command and result files older than this are swept on session start.
     static let staleAge: TimeInterval = 600
+    static let heartbeatTimeout: TimeInterval = 8
 
     /// How much text before the cursor the keyboard sends, for the leading-space decision.
     static let contextBeforeLimit = 40
@@ -49,8 +50,33 @@ enum AsideIPC {
     /// the future. A missing file is no session.
     static func isActive(_ session: SessionState?, at now: Date) -> Bool {
         guard let session, session.active else { return false }
+        if let heartbeat = session.heartbeatAt, now.timeIntervalSince(heartbeat) > heartbeatTimeout { return false }
+        guard session.inputReady != false else { return false }
         guard let expiresAt = session.expiresAt else { return true }
         return expiresAt > now
+    }
+
+    enum PollDecision: Equatable { case deliver, wait, timedOut, unavailable }
+
+    /// A nonfinal result never bypasses deadlines or microphone health checks.
+    static func pollDecision(result: DictationResult?, session: SessionState?, since: Date,
+                             now: Date, sawAnswer: Bool, handoff: Bool) -> PollDecision {
+        if result?.isFinal == true { return .deliver }
+        let elapsed = now.timeIntervalSince(since)
+        if elapsed > 180 || (!sawAnswer && result == nil && elapsed > 6) { return .timedOut }
+        if !isActive(session, at: now) {
+            return handoff && elapsed < 6 ? .wait : .unavailable
+        }
+        return result == nil ? .wait : .deliver
+    }
+
+    static func targetsCurrentRecording(_ command: DictationCommand, currentID: UUID?,
+                                         currentSource: DictationCommand.Source?) -> Bool {
+        guard let currentID else { return false }
+        if let target = command.dictationID { return target == currentID }
+        // Compatibility with an older extension: never let its unscoped command stop
+        // a recording owned by the other input surface.
+        return (command.source ?? .keyboard) == currentSource
     }
 
     /// Same rule as the Mac's `TextInserter.needsLeadingSpace`: add a space when the new
@@ -66,7 +92,10 @@ enum AsideIPC {
     /// still have one stable order on both sides.
     static func ordered(_ commands: [DictationCommand]) -> [DictationCommand] {
         commands.sorted {
-            $0.at == $1.at ? $0.id.uuidString < $1.id.uuidString : $0.at < $1.at
+            if $0.at != $1.at { return $0.at < $1.at }
+            // A stop must never precede its start, even with identical timestamps.
+            if $0.action != $1.action { return $0.action == .start || ($0.action == .stop && $1.action == .cancel) }
+            return $0.id.uuidString < $1.id.uuidString
         }
     }
 
@@ -86,12 +115,16 @@ struct SessionState: Codable, Equatable, Sendable {
     var startedAt: Date
     var expiresAt: Date?
     var pid: Int
+    var heartbeatAt: Date?
+    var inputReady: Bool?
 
-    init(active: Bool, startedAt: Date, expiresAt: Date?, pid: Int = Int(ProcessInfo.processInfo.processIdentifier)) {
+    init(active: Bool, startedAt: Date, expiresAt: Date?, pid: Int = Int(ProcessInfo.processInfo.processIdentifier), heartbeatAt: Date? = nil, inputReady: Bool? = nil) {
         self.active = active
         self.startedAt = startedAt
         self.expiresAt = expiresAt
         self.pid = pid
+        self.heartbeatAt = heartbeatAt
+        self.inputReady = inputReady
     }
 }
 
@@ -117,13 +150,16 @@ struct DictationCommand: Codable, Equatable, Sendable, Identifiable {
     /// The last ~40 characters before the cursor, so the app can decide on a leading space.
     var contextBefore: String?
     var source: Source?
+    /// Stop/cancel acts only on this start command, never on a newer recording.
+    var dictationID: UUID?
 
-    init(id: UUID = UUID(), action: Action, at: Date = Date(), contextBefore: String? = nil, source: Source? = nil) {
+    init(id: UUID = UUID(), action: Action, at: Date = Date(), contextBefore: String? = nil, source: Source? = nil, dictationID: UUID? = nil) {
         self.id = id
         self.action = action
         self.at = at
         self.contextBefore = contextBefore
         self.source = source
+        self.dictationID = dictationID
     }
 
     var isFromControl: Bool { source == .control }
@@ -180,6 +216,12 @@ struct DictationResult: Codable, Equatable, Sendable, Identifiable {
     var isFinal: Bool { status == .done || status == .failed }
 }
 
+/// A keyboard-initiated app switch survives destruction of the keyboard process.
+struct KeyboardHandoff: Codable, Sendable {
+    var id: UUID
+    var at: Date
+}
+
 // MARK: - Store
 
 enum AsideIPCError: LocalizedError {
@@ -216,19 +258,35 @@ struct AsideIPCStore: Sendable {
 
     var sessionURL: URL { root.appendingPathComponent("session.json") }
     var controlURL: URL { root.appendingPathComponent("control.json") }
+    var handoffURL: URL { root.appendingPathComponent("keyboard-handoff.json") }
+
+    func writeHandoff(_ handoff: KeyboardHandoff) throws { try write(handoff, to: handoffURL) }
+    func readHandoff() -> KeyboardHandoff? { read(KeyboardHandoff.self, from: handoffURL) }
+    func removeHandoff() { try? fileManager.removeItem(at: handoffURL) }
     var commandsDirectory: URL { root.appendingPathComponent("commands", isDirectory: true) }
     var resultsDirectory: URL { root.appendingPathComponent("results", isDirectory: true) }
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .millisecondsSince1970
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }()
 
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let value = try decoder.singleValueContainer()
+            if let milliseconds = try? value.decode(Double.self) {
+                return Date(timeIntervalSince1970: milliseconds / 1000)
+            }
+            let text = try value.decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            guard let date = formatter.date(from: text) else {
+                throw DecodingError.dataCorruptedError(in: value, debugDescription: "Invalid date")
+            }
+            return date
+        }
         return decoder
     }()
 
@@ -343,6 +401,7 @@ struct AsideIPCStore: Sendable {
         try? fileManager.removeItem(at: resultsDirectory)
         try? fileManager.removeItem(at: sessionURL)
         try? fileManager.removeItem(at: controlURL)
+        removeHandoff()
     }
 
     // MARK: Plumbing

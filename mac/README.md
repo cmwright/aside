@@ -72,11 +72,13 @@ daily and offer the update.
 
 ## Source map
 
-- `App.swift` — `@main`, the menu, `AppController` (trigger, recording, the
-  transcription/cleanup pipeline, insertion).
+- `App.swift` — `@main`, the menu, `AppController` (trigger, recording ownership,
+  recovery and insertion).
+- `DictationPipeline.swift` — shared speech/cleanup pipeline, cancellation, bounded retries
+  and raw-transcript checkpoints for Mac and iPhone.
 - `Trigger.swift` — hold vs double-tap state machine for Right Option (pure, tested).
-- `Recorder.swift` — AVAudioEngine capture to 16 kHz mono PCM, streaming into Parakeet
-  while the key is held.
+- `Recorder.swift` — AVAudioEngine capture to 16 kHz mono PCM; Parakeet transcribes
+  the completed recording after release.
 - `LocalTranscriber.swift` — Parakeet v3 via FluidAudio. `AppleCleanup.swift` — Apple's
   on-device model via FoundationModels with guided output and a similarity guard.
 - `DirectClient.swift`, `Providers.swift`, `APIKeyStore.swift` — OpenAI-compatible

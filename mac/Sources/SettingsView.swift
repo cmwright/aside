@@ -185,17 +185,17 @@ extension ProvidersSettingsView {
         Picker(title, selection: providerID) {
             ForEach(presets) { Text($0.name).tag($0.id) }
         }
-        if preset.id == ProviderPreset.custom.id || (stt ? preset.sttBaseURL : preset.chatBaseURL) == nil {
-            TextField("Base URL", text: baseURL, prompt: Text("https://host/v1"))
-                .textFieldStyle(.roundedBorder)
-        }
+        TextField("Base URL", text: baseURL, prompt: Text((stt ? preset.sttBaseURL : preset.chatBaseURL) ?? "https://host/v1"))
+            .textFieldStyle(.roundedBorder)
         TextField("Model", text: model, prompt: Text((stt ? preset.defaultSttModel : preset.defaultChatModel) ?? "model id"))
             .textFieldStyle(.roundedBorder)
         if preset.needsKey {
             HStack {
-                SecureField("API key", text: key)
+                SecureField("API key", text: Binding(get: { key.wrappedValue }, set: { value in
+                    key.wrappedValue = value
+                    APIKeyStore.set(value, for: preset.id)
+                }))
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: key.wrappedValue) { _, value in APIKeyStore.set(value, for: preset.id) }
                 if let url = preset.keyURL, let link = URL(string: url) {
                     Link("Get a key", destination: link).font(.caption)
                 }

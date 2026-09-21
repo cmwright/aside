@@ -25,6 +25,14 @@ struct AsideApp: App {
         .onChange(of: scenePhase) { _, phase in
             // A session can expire while the app is suspended; catch up on the way back in.
             if phase == .active { controller.refresh() }
+            if phase == .background {
+                controller.dictionary.save()
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Save dictation history")
+                Task { @MainActor in
+                    await controller.history.flush()
+                    if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+                }
+            }
         }
     }
 }
