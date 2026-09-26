@@ -256,15 +256,11 @@ final class AppController: ObservableObject {
     }
 
     /// Pure decision, split out so it can be unit-tested: is the *right* Option key down?
-    /// `eventFlags` is `NSEvent.modifierFlags.rawValue` from the flagsChanged event;
-    /// `liveFlags` is the current hardware state (`NSEvent.modifierFlags`), used only to
-    /// veto a stale "still down" when no Option key is held any more.
-    nonisolated static func rightOptionIsDown(
-        eventFlags: UInt,
-        liveFlags: NSEvent.ModifierFlags
-    ) -> Bool {
-        guard eventFlags & rightOptionDeviceMask != 0 else { return false }
-        return liveFlags.contains(.option)
+    /// Use the state carried by the event, not a separate `NSEvent.modifierFlags`
+    /// query. That query can disagree with the event by the time our main-queue
+    /// handler runs, causing a valid press to be interpreted as a release.
+    nonisolated static func rightOptionIsDown(eventFlags: UInt) -> Bool {
+        eventFlags & rightOptionDeviceMask != 0
     }
 
     /// `flags` is the event's `CGEventFlags` raw value, which carries the same device bits
@@ -272,8 +268,7 @@ final class AppController: ObservableObject {
     private func handleFlagsChanged(keyCode: Int64, flags: UInt64, timestamp: TimeInterval) {
         guard settings.holdRightOption, keyCode == Int64(AppController.rightOptionKeyCode) else { return }
         let isDown = AppController.rightOptionIsDown(
-            eventFlags: UInt(truncatingIfNeeded: flags),
-            liveFlags: NSEvent.modifierFlags
+            eventFlags: UInt(truncatingIfNeeded: flags)
         )
         Log.app.debug("flagsChanged right-option down=\(isDown, privacy: .public)")
         guard isDown != rightOptionDown else { return }
