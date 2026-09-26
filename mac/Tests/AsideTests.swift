@@ -220,32 +220,37 @@ final class AsideTests: XCTestCase {
 
     @MainActor
     func testRightOptionDownUsesTheDeviceSpecificBit() {
-        let live = NSEvent.ModifierFlags.option
-
         // Right Option alone, pressed.
         XCTAssertTrue(AppController.rightOptionIsDown(
-            eventFlags: Self.genericOption | Self.rightOptionBit, liveFlags: live))
+            eventFlags: Self.genericOption | Self.rightOptionBit))
 
         // Both held, then Right Option released: the generic .option bit is still set
         // because Left Option is down, but the right device bit is gone. This is the case
         // that used to wedge the recorder.
         XCTAssertFalse(AppController.rightOptionIsDown(
-            eventFlags: Self.genericOption | Self.leftOptionBit, liveFlags: live))
+            eventFlags: Self.genericOption | Self.leftOptionBit))
 
         // Both held down.
         XCTAssertTrue(AppController.rightOptionIsDown(
-            eventFlags: Self.genericOption | Self.leftOptionBit | Self.rightOptionBit, liveFlags: live))
+            eventFlags: Self.genericOption | Self.leftOptionBit | Self.rightOptionBit))
 
         // Everything released.
-        XCTAssertFalse(AppController.rightOptionIsDown(eventFlags: 0, liveFlags: []))
+        XCTAssertFalse(AppController.rightOptionIsDown(eventFlags: 0))
     }
 
     @MainActor
-    func testStaleDownIsVetoedByLiveHardwareState() {
-        // A stale event that still claims Right Option is down, while the hardware reports
-        // no Option key held at all, counts as a release.
-        XCTAssertFalse(AppController.rightOptionIsDown(
-            eventFlags: Self.genericOption | Self.rightOptionBit, liveFlags: [.shift]))
+    func testCapturedRightOptionHoldStartsAndSends() {
+        // Actual press/release flags captured on a Mac where the separate AppKit
+        // modifier-state query caused Aside to classify both events as released.
+        // Replay in order even if the main queue handles them after the key is up.
+        var trigger = TriggerLogic()
+        var actions: [TriggerLogic.Action] = []
+        for (flags, timestamp) in [(UInt(0x80140), 10.0), (UInt(0x100), 12.0)] {
+            actions.append(AppController.rightOptionIsDown(eventFlags: flags)
+                ? trigger.keyDown(at: timestamp)
+                : trigger.keyUp(at: timestamp))
+        }
+        XCTAssertEqual(actions, [.start, .send])
     }
 
     @MainActor
